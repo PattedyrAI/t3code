@@ -31,6 +31,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 it("strips scheduler provenance supplied by a client before dispatch", () => {
   const command = ThreadManagementService.withCreationProvenance(
@@ -51,7 +52,6 @@ it("strips scheduler provenance supplied by a client before dispatch", () => {
   expect(command).not.toHaveProperty("scheduledTaskId");
   expect(command).toMatchObject({ createdBy: "user", creationSource: "web", text: "User message" });
 });
-import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),

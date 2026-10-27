@@ -19,6 +19,8 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
   resolveThreadSchedule,
+  threadRaisedHandWhileSettled,
+  sortScheduledThreadsByNextRun,
   formatThreadSchedule,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -651,6 +653,7 @@ export function buildThreadListV2Items(input: {
   const working: EnvironmentThreadShell[] = [];
   const scheduled: EnvironmentThreadShell[] = [];
   const scheduleLabels = new Map<string, string>();
+  const nextRunByThreadKey = new Map<string, string | null>();
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
@@ -701,10 +704,23 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
+    const settledAttention =
+      thread.settledOverride === "settled" &&
+      threadRaisedHandWhileSettled(
+        thread,
+        input.schedules?.get(`${thread.environmentId}:${thread.id}`) ?? [],
+      );
+    if (
+      supportsSettlement &&
+      thread.settledOverride === "settled" &&
+      !hasQueuedMessages &&
+      !settledAttention
+    ) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
+    } else if (settledAttention) {
+      active.push(thread);
     } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
       working.push(thread);
     } else {
@@ -713,10 +729,12 @@ export function buildThreadListV2Items(input: {
         thread,
         input.schedules?.get(key) ?? [],
         (input.isWorking ?? isThreadWorking)(thread),
+        hasQueuedMessages,
       );
-      if (task === null || hasQueuedMessages) active.push(thread);
+      if (task === null) active.push(thread);
       else {
         scheduled.push(thread);
+        nextRunByThreadKey.set(key, task.nextRunAt);
         scheduleLabels.set(
           key,
           formatThreadSchedule(
@@ -784,10 +802,15 @@ export function buildThreadListV2Items(input: {
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
+  const orderedScheduled = sortScheduledThreadsByNextRun(scheduled, (thread) =>
+    nextRunByThreadKey.get(`${thread.environmentId}:${thread.id}`),
+  );
   const visibleScheduled =
     input.scheduledShelfExpanded === true
-      ? scheduled
-      : scheduled.filter((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
+      ? orderedScheduled
+      : orderedScheduled.filter(
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+        );
   const visibleWorking =
     input.workingShelfExpanded === true
       ? orderedWorking

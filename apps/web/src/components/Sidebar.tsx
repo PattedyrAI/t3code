@@ -33,6 +33,8 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
   resolveThreadSchedule,
+  threadRaisedHandWhileSettled,
+  sortScheduledThreadsByNextRun,
   formatThreadSchedule,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -571,7 +573,7 @@ function useSidebarThreads(input: {
   };
 }
 
-function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
+export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
@@ -617,9 +619,12 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           : { ...projected, snoozedAt: thread.snoozedAt, snoozedUntil: thread.snoozedUntil },
       );
     } else {
+      const settledAttention =
+        thread.settledOverride === "settled" &&
+        threadRaisedHandWhileSettled(thread, input.schedules.get(threadKey) ?? []);
       const section = resolveSidebarThreadSection({
         snoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
-        settled: supportsSettlement && thread.settledOverride === "settled",
+        settled: supportsSettlement && thread.settledOverride === "settled" && !settledAttention,
         pinned: thread.pinnedAt != null,
       });
       (section === "snoozed"
@@ -629,6 +634,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           : section === "pinned"
             ? pinned
             : (() => {
+                if (settledAttention) return active;
                 const task = resolveThreadSchedule(
                   thread,
                   input.schedules.get(threadKey) ?? [],
@@ -666,7 +672,10 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
     workingThreads: sortWorkingThreadsBySend(working),
-    scheduledThreads: scheduled,
+    scheduledThreads: sortScheduledThreadsByNextRun(
+      scheduled,
+      (thread) => scheduleByThreadKey.get(threadShellKey(thread))?.nextRunAt,
+    ),
     scheduleByThreadKey,
     snoozedThreads: snoozed.toSorted(
       (left, right) =>

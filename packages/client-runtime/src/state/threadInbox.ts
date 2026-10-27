@@ -1,9 +1,11 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
-import { effectiveSnoozed } from "./threadSettled.ts";
+import { effectiveSnoozed, threadRaisedHandWhileSnoozed } from "./threadSettled.ts";
 import type { ScheduledTask } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+
+const scheduleFormatters = new Map<string, Intl.DateTimeFormat>();
 
 export function formatThreadSchedule(
   task: Pick<ScheduledTask, "schedule" | "nextRunAt">,
@@ -21,13 +23,32 @@ export function formatThreadSchedule(
   }
   if (timeZone === undefined) return "Timezone unknown";
   try {
-    return new Intl.DateTimeFormat(undefined, {
-      timeZone,
-      hour: "numeric",
-      minute: "2-digit",
-      timeZoneName: "short",
-      ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
-    }).format(due);
+    const dayKey = `${timeZone}:day`;
+    let dayFormatter = scheduleFormatters.get(dayKey);
+    if (dayFormatter === undefined) {
+      dayFormatter = new Intl.DateTimeFormat(undefined, {
+        timeZone,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+      });
+      scheduleFormatters.set(dayKey, dayFormatter);
+    }
+    const anotherDay = dayFormatter.format(due) !== dayFormatter.format(now);
+    const key = `${timeZone}:${timestampFormat}:${anotherDay}`;
+    let formatter = scheduleFormatters.get(key);
+    if (formatter === undefined) {
+      formatter = new Intl.DateTimeFormat(undefined, {
+        timeZone,
+        hour: "numeric",
+        minute: "2-digit",
+        timeZoneName: "short",
+        ...(anotherDay ? { weekday: "short" } : {}),
+        ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+      });
+      scheduleFormatters.set(key, formatter);
+    }
+    return formatter.format(due);
   } catch {
     return "Timezone unknown";
   }
@@ -145,18 +166,64 @@ type ThreadScheduleBinding = {
   readonly lastRunStatus: string;
 };
 
+type ScheduledThreadInput = WorkingThreadInput &
+  Pick<EnvironmentThreadShell, "id"> &
+  Partial<Pick<EnvironmentThreadShell, "settledAt" | "pendingGuestMessageCount" | "source">>;
+
+export function threadRaisedHandWhileSettled(
+  thread: ScheduledThreadInput,
+  tasks: readonly ThreadScheduleBinding[],
+): boolean {
+  if (!tasks.some((task) => task.enabled && task.threadId === thread.id)) return false;
+  if (
+    threadRaisedHandWhileSnoozed({ ...thread, snoozedAt: thread.settledAt ?? null }) ||
+    (thread.interactionMode === "plan" && thread.hasActionableProposedPlan)
+  )
+    return true;
+  const failedAt =
+    thread.latestRun?.status === "failed"
+      ? (thread.latestRun.completedAt ?? thread.runtime?.updatedAt)
+      : thread.runtime?.lastError != null
+        ? thread.runtime.updatedAt
+        : undefined;
+  return (
+    failedAt !== undefined &&
+    (thread.settledAt == null || Date.parse(failedAt) > Date.parse(thread.settledAt))
+  );
+}
+
+export function sortScheduledThreadsByNextRun<T extends ThreadKeyInput>(
+  threads: readonly T[],
+  nextRunAt: (thread: T) => string | null | undefined,
+): T[] {
+  const due = new Map(
+    threads.map((thread) => [
+      thread,
+      toSortableTimestamp(nextRunAt(thread) ?? undefined) ?? Infinity,
+    ]),
+  );
+  return [...threads].sort(
+    (left, right) =>
+      due.get(left)! - due.get(right)! ||
+      left.id.localeCompare(right.id) ||
+      left.environmentId.localeCompare(right.environmentId),
+  );
+}
+
 export function resolveThreadSchedule<T extends ThreadScheduleBinding>(
-  thread: WorkingThreadInput &
-    Pick<EnvironmentThreadShell, "id"> &
-    Partial<Pick<EnvironmentThreadShell, "pendingGuestMessageCount">>,
+  thread: ScheduledThreadInput,
   tasks: readonly T[],
   working = isThreadWorking(thread),
+  hasQueuedMessages = false,
 ): T | null {
   if (
     working ||
+    hasQueuedMessages ||
+    thread.latestRun?.status === "queued" ||
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest != null ||
+    thread.source?.pendingRuntimeRequest != null ||
     (thread.pendingGuestMessageCount ?? 0) > 0 ||
     (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
     thread.runtime?.lastError != null ||

@@ -4,6 +4,13 @@ import {
   AuthSessionId,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
+  CommandId,
+  MessageId,
+  ScheduledTaskId,
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2Command,
+  OrchestrationV2DispatchCommandResult,
+  type OrchestrationV2ServerCommand,
   ScheduledTaskListResult,
   EnvironmentId,
   ProjectId,
@@ -480,6 +487,98 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect("WS dispatch strips forged scheduler attribution before message intake", () =>
+  Effect.gen(function* () {
+    const dispatched = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
+    const responses = yield* Queue.unbounded<OrchestrationV2DispatchCommandResult>();
+    const services = Layer.mergeAll(
+      layerUnusedConfigRpcServices,
+      Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+      Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+      Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+      Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+      Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+      Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+      Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({ enqueueCommand: (effect) => effect }),
+      Layer.mock(AnalyticsService.AnalyticsService)({ record: () => Effect.void }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        dispatch: (command) =>
+          Queue.offer(dispatched, command).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+      }),
+    );
+    const server = yield* RpcServer.makeNoSerialization(
+      RpcGroup.make(
+        Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+          payload: OrchestrationV2Command,
+          success: OrchestrationV2DispatchCommandResult,
+        }),
+      ),
+      {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit"
+            ? response.exit._tag === "Success"
+              ? Queue.offer(responses, response.exit.value)
+              : Effect.die(response.exit)
+            : Effect.void,
+      },
+    ).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("dispatch-fixture"),
+            subject: "fixture",
+            method: "browser-session-cookie",
+            scopes: [AuthOrchestrationOperateScope],
+          },
+          {},
+          {},
+          yield* PreviewAutomationBroker.PreviewAutomationBroker,
+          yield* ServerBrowser.ServerBrowser,
+        ).pipe(Layer.provide(services)),
+      ),
+    );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("forged-schedule"),
+      tag: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      payload: {
+        type: "message.dispatch",
+        commandId: CommandId.make("forged-schedule"),
+        threadId: ThreadId.make("fixture-thread"),
+        messageId: MessageId.make("fixture-message"),
+        text: "Ordinary message",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "web",
+        scheduledTaskId: ScheduledTaskId.make("unknown-or-other-thread-task"),
+      },
+      headers: Headers.empty,
+    });
+    const command = yield* Queue.take(dispatched);
+    assert.notProperty(command, "scheduledTaskId");
+    assert.deepInclude(command, {
+      createdBy: "user",
+      creationSource: "web",
+      text: "Ordinary message",
+      dispatchMode: { type: "defer_start" },
+    });
+    assert.deepEqual(yield* Queue.take(responses), { sequence: 1 });
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );
 
 it.effect.each([

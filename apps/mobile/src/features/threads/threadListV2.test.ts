@@ -126,10 +126,120 @@ describe("scheduled shelf", () => {
       { interactionMode: "plan" as const, hasActionableProposedPlan: true },
     ])
       expect(build({ ...idle(), ...patch }).scheduledCount).toBe(0);
+    const pinned = build({ ...idle(), pinnedAt: task.createdAt });
+    expect(pinned.items[0]).toMatchObject({ pinned: true, variant: "card" });
+    const snoozed = build({
+      ...idle(),
+      snoozedAt: task.createdAt,
+      snoozedUntil: "2026-10-27T12:00:00Z",
+    });
+    expect(snoozed.snoozedCount).toBe(1);
+    expect(snoozed.items[0]).toMatchObject({ snoozed: true, variant: "slim" });
+    const settled = build({ ...idle(), settledOverride: "settled", settledAt: task.createdAt });
+    expect(settled.settledCount).toBe(1);
+    expect(settled.items[0]?.variant).toBe("slim");
     expect(build(idle(), []).scheduledCount).toBe(0);
     expect(build(idle(), [{ ...task, enabled: false }]).scheduledCount).toBe(0);
     expect(build(idle(), [{ ...task, lastRunStatus: "failed" }]).scheduledCount).toBe(0);
     expect(build(idle(), [{ ...task, threadId: null }]).scheduledCount).toBe(0);
+  });
+  it("surfaces settled scheduled sessions asking for attention and only fresh failures", () => {
+    const settled = { ...idle(), settledOverride: "settled" as const, settledAt: task.createdAt };
+    expect(build(settled).settledCount).toBe(1);
+    for (const patch of [
+      { hasPendingApprovals: true },
+      { hasPendingUserInput: true },
+      { interactionMode: "plan" as const, hasActionableProposedPlan: true },
+    ]) {
+      const actionable = build({ ...settled, ...patch });
+      expect(actionable.settledCount).toBe(0);
+      expect(actionable.items[0]?.variant).toBe("card");
+    }
+    const failure = (updatedAt: string) => ({
+      ...settled,
+      runtime: {
+        status: "failed" as const,
+        activeRunId: null,
+        providerInstanceId: task.modelSelection.instanceId,
+        providerName: "Codex",
+        lastError: "Run failed",
+        updatedAt,
+      },
+    });
+    expect(build(failure("2026-10-27T08:01:00Z")).settledCount).toBe(0);
+    const reportedError = failure("2026-10-27T08:01:00Z");
+    const actionableError = build({
+      ...reportedError,
+      runtime: { ...reportedError.runtime, status: "idle" },
+    });
+    expect(actionableError.workingCount).toBe(0);
+    expect(actionableError.items[0]?.variant).toBe("card");
+    expect(build(failure("2026-10-27T07:59:00Z")).settledCount).toBe(1);
+    expect(
+      build({ ...settled, hasPendingApprovals: true }, [{ ...task, enabled: false }]).settledCount,
+    ).toBe(1);
+  });
+  it("orders Scheduled sessions by due time, with stable ids and unknown times last", () => {
+    const rows = ["unknown", "late", "b", "a"].map((name) => ({
+      ...idle(),
+      id: ThreadId.make(name),
+      title: name,
+    }));
+    const layout = buildThreadListV2Items({
+      threads: rows,
+      schedules: new Map(
+        rows.map((row) => [
+          `${environmentId}:${row.id}`,
+          [
+            {
+              ...task,
+              threadId: row.id,
+              nextRunAt:
+                row.id === "unknown"
+                  ? null
+                  : row.id === "late"
+                    ? "2026-10-27T12:00:00Z"
+                    : "2026-10-27T10:00:00Z",
+            },
+          ],
+        ]),
+      ),
+      environmentId: null,
+      searchQuery: "",
+      now: "2026-10-27T08:00:00Z",
+      scheduledShelfExpanded: true,
+    });
+    expect(layout.items.map((item) => item.thread.id)).toEqual(["a", "b", "late", "unknown"]);
+  });
+  it("keeps local queued messages and held queued runs in the mobile inbox", () => {
+    const local = buildThreadListV2Items({
+      threads: [idle()],
+      schedules: new Map([[`${environmentId}:${id}`, [task]]]),
+      queuedThreadKeys: new Set([`${environmentId}:${id}`]),
+      environmentId: null,
+      searchQuery: "",
+      now: task.createdAt,
+      scheduledShelfExpanded: true,
+    });
+    expect(local.scheduledCount).toBe(0);
+    expect(local.items[0]?.variant).toBe("card");
+    const held = build(
+      {
+        ...idle(),
+        latestRun: {
+          runId: RunId.make("held"),
+          status: "queued",
+          requestedAt: task.createdAt,
+          startedAt: null,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      },
+      [task],
+      true,
+    );
+    expect(held.scheduledCount).toBe(0);
+    expect(held.items[0]?.variant).toBe("card");
   });
 });
 

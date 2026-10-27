@@ -5,6 +5,7 @@ import {
   createInboxReturnTracker,
   isThreadWorking,
   resolveThreadSchedule,
+  threadRaisedHandWhileSettled,
   formatThreadSchedule,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
@@ -54,6 +55,62 @@ describe("resolveThreadSchedule", () => {
     expect(resolveThreadSchedule(thread("a", false), [unknown])).toBe(unknown);
     expect(resolveThreadSchedule(thread("a", false), [unknown], true)).toBeNull();
   });
+  it("keeps held queued turns out of Scheduled even without an active runtime", () => {
+    const queued = {
+      ...thread("a", false),
+      latestRun: {
+        runId: RunId.make("held"),
+        status: "queued" as const,
+        requestedAt: "2026-10-27T08:00:00Z",
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+    expect(resolveThreadSchedule(queued, [task("one", null)])).toBeNull();
+    expect(resolveThreadSchedule(thread("a", false), [task("one", null)], false, true)).toBeNull();
+  });
+  it("only raises a settled automation for current attention or failures after its settlement", () => {
+    const settled = { ...thread("a", false), settledAt: "2026-10-27T08:00:00Z" };
+    const tasks = [task("one", null)];
+    expect(threadRaisedHandWhileSettled(settled, tasks)).toBe(false);
+    expect(threadRaisedHandWhileSettled({ ...settled, hasPendingApprovals: true }, tasks)).toBe(
+      true,
+    );
+    expect(threadRaisedHandWhileSettled({ ...settled, hasPendingUserInput: true }, tasks)).toBe(
+      true,
+    );
+    expect(
+      threadRaisedHandWhileSettled(
+        { ...settled, interactionMode: "plan", hasActionableProposedPlan: true },
+        tasks,
+      ),
+    ).toBe(true);
+    expect(
+      threadRaisedHandWhileSettled({ ...settled, hasPendingApprovals: true }, [
+        task("paused", null, false),
+      ]),
+    ).toBe(false);
+    const failed = (completedAt: string) => ({
+      ...settled,
+      latestRun: {
+        runId: RunId.make("failed"),
+        status: "failed" as const,
+        requestedAt: completedAt,
+        startedAt: completedAt,
+        completedAt,
+        assistantMessageId: null,
+      },
+      runtime: {
+        ...thread("a", true).runtime!,
+        status: "failed" as const,
+        lastError: "Failed",
+        updatedAt: "2026-10-27T09:00:00Z",
+      },
+    });
+    expect(threadRaisedHandWhileSettled(failed("2026-10-27T08:01:00Z"), tasks)).toBe(true);
+    expect(threadRaisedHandWhileSettled(failed("2026-10-27T07:59:00Z"), tasks)).toBe(false);
+  });
 });
 
 describe("formatThreadSchedule", () => {
@@ -94,6 +151,22 @@ describe("formatThreadSchedule", () => {
     expect(second).toMatch(/02:30/);
     expect(first).not.toBe(second);
     expect(formatThreadSchedule(fixed, 0, "locale", "Etc/Unknown")).toBe("Timezone unknown");
+  });
+  it("includes the weekday for a fixed-time run on another environment-local day", () => {
+    const weekly = {
+      schedule: { type: "fixed_time" as const, timeOfDay: "10:00", weekdays: [5] },
+      nextRunAt: "2026-10-30T09:00:00Z",
+    };
+    expect(
+      formatThreadSchedule(weekly, Date.parse("2026-10-27T08:00:00Z"), "24-hour", "Europe/Oslo"),
+    ).toMatch(/Fri.*10:00.*(?:CET|GMT\+1)/);
+    expect(
+      formatThreadSchedule(weekly, Date.parse("2026-10-30T08:00:00Z"), "24-hour", "Europe/Oslo"),
+    ).not.toMatch(/Fri/);
+    const midnight = { ...weekly, nextRunAt: "2026-10-29T23:30:00Z" };
+    expect(
+      formatThreadSchedule(midnight, Date.parse("2026-10-29T22:30:00Z"), "24-hour", "Europe/Oslo"),
+    ).toMatch(/Fri.*00:30/);
   });
 });
 

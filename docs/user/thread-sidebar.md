@@ -148,6 +148,8 @@ a task. You do not need to settle the session after each run.
 Executions use the normal Working section and notifications. Approvals, questions, plan reviews
 and failures remain actionable. Pinning, snoozing and settling take priority over Scheduled.
 Pausing or deleting the last enabled automation returns the session to its ordinary section.
+Settled automation sessions return to the active list for an approval, answer, plan review or a new
+failure. Healthy sessions that were already automatically settled stay Settled until you un-settle them.
 Provider-native loops and cron jobs are separate from T3 Code scheduled tasks and are not listed here.
 
 ## Settle finished work
