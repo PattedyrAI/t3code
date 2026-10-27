@@ -72,7 +72,7 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
-  readonly isSettled: boolean;
+  readonly settledOverride: "active" | "settled" | null;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
@@ -127,7 +127,7 @@ export function buildThreadActionMenuItems(
       : []),
     ...(state.supports.settlement
       ? [
-          state.isSettled
+          state.settledOverride === "settled"
             ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
             : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
         ]

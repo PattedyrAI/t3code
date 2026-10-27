@@ -30,6 +30,12 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import {
+  shellStreamItemFromThreadShell,
+  shouldPublishShellApplicationEvent,
+  skipUnchangedThreadShells,
+} from "./ShellStream.ts";
 import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
@@ -185,6 +191,100 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.effect("held queue lookup uses the existing per-thread status index", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const plan = yield* sql<{
+      detail: string;
+    }>`EXPLAIN QUERY PLAN SELECT 1 FROM orchestration_v2_projection_runs held WHERE held.thread_id = 'fixture' AND held.status = 'queued' AND json_extract(held.payload_json, '$.queueHeld') IS 1`;
+    assert.match(
+      plan.map((row) => row.detail).join(" "),
+      /orchestration_v2_projection_runs_thread_status_idx/,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)(
+  "%s shells expose held queue transitions even when the presented run is unchanged",
+  ([, layer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("held-shell");
+      const projection = yield* store.getThreadProjection(threadId);
+      const base = projection.runs[0]!;
+      const now = projection.updatedAt;
+      yield* store.apply({
+        id: EventId.make("held-shell:later-completion"),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...base,
+          id: RunId.make("scheduled-after-held"),
+          ordinal: 3,
+          status: "completed",
+          completedAt: DateTime.add(now, { minutes: 1 }),
+        },
+      });
+      const changes = [];
+      for (const [index, [status, held, expected]] of (
+        [
+          ["queued", true, true],
+          ["queued", false, false],
+          ["queued", true, true],
+          ["cancelled", true, false],
+          ["queued", true, true],
+          ["running", true, false],
+        ] as const
+      ).entries()) {
+        const event = {
+          id: EventId.make(`held-shell:${index}`),
+          type: "run.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...base,
+            id: RunId.make("held-shell:queued"),
+            ordinal: 2,
+            status,
+            queueHeld: held,
+            startedAt: status === "running" ? now : null,
+            completedAt: status === "cancelled" ? now : null,
+          },
+        };
+        yield* store.apply(event);
+        const shell = yield* store.getThreadShell(threadId);
+        const snapshot = (yield* store.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        assert.equal(shell?.hasHeldQueuedMessages, expected);
+        assert.equal(snapshot.hasHeldQueuedMessages, expected);
+        assert.equal(
+          ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(threadId))
+            .hasHeldQueuedMessages,
+          expected,
+        );
+        const stored = { sequence: index + 1, commandId: null, event };
+        assert.isTrue(shouldPublishShellApplicationEvent(stored, new Set()));
+        changes.push(shellStreamItemFromThreadShell({ stored, shell }));
+      }
+      const delivered = yield* Stream.runCollect(
+        skipUnchangedThreadShells(Stream.fromIterable(changes)),
+      );
+      assert.deepEqual(
+        Array.from(delivered).map((item) =>
+          item?.kind === "thread.updated" ? item.thread.hasHeldQueuedMessages : null,
+        ),
+        [true, false, true, false, true, false],
+      );
+      const other = yield* addRolledBackRecoveryCandidate("other-held-shell");
+      assert.isFalse((yield* store.getThreadShell(other))?.hasHeldQueuedMessages);
+    }).pipe(Effect.provide(layer)),
+);
 
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],

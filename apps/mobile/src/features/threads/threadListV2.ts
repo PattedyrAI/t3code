@@ -101,7 +101,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
 }
 
 export function resolveThreadListV2SwipeActions(input: {
-  readonly variant: "card" | "slim";
+  readonly settledOverride: EnvironmentThreadShell["settledOverride"];
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
@@ -114,7 +114,7 @@ export function resolveThreadListV2SwipeActions(input: {
     return { primary: "unsnooze", secondary: null };
   }
   const primary = input.settlementSupported
-    ? input.variant === "slim"
+    ? input.settledOverride === "settled"
       ? "unsettle"
       : "settle"
     : "archive";
@@ -719,10 +719,10 @@ export function buildThreadListV2Items(input: {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (settledAttention) {
-      active.push(thread);
     } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
       working.push(thread);
+    } else if (settledAttention) {
+      active.push(thread);
     } else {
       const key = `${thread.environmentId}:${thread.id}`;
       const task = resolveThreadSchedule(

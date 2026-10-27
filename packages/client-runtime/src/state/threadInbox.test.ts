@@ -11,6 +11,10 @@ import {
   sortWorkingThreadsBySend,
 } from "./threadInbox.ts";
 
+import { presentThreadShell } from "./models.ts";
+import { v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+import * as DateTime from "effect/DateTime";
+
 const environmentId = EnvironmentId.make("environment-1");
 
 describe("resolveThreadSchedule", () => {
@@ -55,20 +59,48 @@ describe("resolveThreadSchedule", () => {
     expect(resolveThreadSchedule(thread("a", false), [unknown])).toBe(unknown);
     expect(resolveThreadSchedule(thread("a", false), [unknown], true)).toBeNull();
   });
-  it("keeps held queued turns out of Scheduled even without an active runtime", () => {
-    const queued = {
-      ...thread("a", false),
-      latestRun: {
-        runId: RunId.make("held"),
-        status: "queued" as const,
-        requestedAt: "2026-10-27T08:00:00Z",
-        startedAt: null,
-        completedAt: null,
-        assistantMessageId: null,
-      },
-    };
-    expect(resolveThreadSchedule(queued, [task("one", null)])).toBeNull();
-    expect(resolveThreadSchedule(thread("a", false), [task("one", null)], false, true)).toBeNull();
+  it("keeps real held-queue shells out of Scheduled and preserves older-server behavior", () => {
+    const shell = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      id: ThreadId.make("a"),
+      latestRunId: null,
+      activeProviderThreadId: null,
+      status: "idle",
+      hasHeldQueuedMessages: true,
+    });
+    expect(shell.latestRun).toBeNull();
+    expect(shell.runtime).toBeNull();
+    expect(resolveThreadSchedule(shell, [task("one", null)])).toBeNull();
+    expect(
+      resolveThreadSchedule({ ...shell, hasHeldQueuedMessages: false }, [task("one", null)]),
+    ).not.toBeNull();
+    expect(
+      resolveThreadSchedule(
+        presentThreadShell(environmentId, { ...v2ThreadShell, id: ThreadId.make("a") }),
+        [task("one", null)],
+      ),
+    ).not.toBeNull();
+    expect(resolveThreadSchedule(shell, [task("one", null)], false, true)).toBeNull();
+  });
+  it("ignores metadata writes and pre-settle plans but surfaces newly completed plans", () => {
+    const tasks = [task("one", null)];
+    const shell = (completedAt: string, plan = false) =>
+      presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        id: ThreadId.make("a"),
+        latestRunId: RunId.make("done"),
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe(completedAt),
+        settledOverride: "settled",
+        settledAt: DateTime.makeUnsafe("2026-10-27T08:00:00Z"),
+        updatedAt: DateTime.makeUnsafe("2026-10-27T09:00:00Z"),
+        lastError: "Old error",
+        interactionMode: plan ? "plan" : "default",
+        hasActionableProposedPlan: plan,
+      });
+    expect(threadRaisedHandWhileSettled(shell("2026-10-27T07:00:00Z"), tasks)).toBe(false);
+    expect(threadRaisedHandWhileSettled(shell("2026-10-27T07:00:00Z", true), tasks)).toBe(false);
+    expect(threadRaisedHandWhileSettled(shell("2026-10-27T08:01:00Z", true), tasks)).toBe(true);
   });
   it("only raises a settled automation for current attention or failures after its settlement", () => {
     const settled = { ...thread("a", false), settledAt: "2026-10-27T08:00:00Z" };
@@ -82,7 +114,19 @@ describe("resolveThreadSchedule", () => {
     );
     expect(
       threadRaisedHandWhileSettled(
-        { ...settled, interactionMode: "plan", hasActionableProposedPlan: true },
+        {
+          ...settled,
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          latestRun: {
+            runId: RunId.make("plan"),
+            status: "completed",
+            requestedAt: null,
+            startedAt: null,
+            completedAt: "2026-10-27T08:01:00Z",
+            assistantMessageId: null,
+          },
+        },
         tasks,
       ),
     ).toBe(true);
@@ -114,6 +158,30 @@ describe("resolveThreadSchedule", () => {
 });
 
 describe("formatThreadSchedule", () => {
+  it("dates a fixed run at least six days away and marks overdue fixed runs Due", () => {
+    const task = {
+      schedule: { type: "fixed_time" as const, timeOfDay: "10:00", weekdays: [2] },
+      nextRunAt: "2026-11-03T09:00:00Z",
+    };
+    const label = formatThreadSchedule(
+      task,
+      Date.parse("2026-10-27T09:00:00Z"),
+      "24-hour",
+      "Europe/Oslo",
+    );
+    expect(label).toMatch(/Nov.*3|3.*Nov/);
+    expect(label).toMatch(/10:00/);
+    expect(
+      formatThreadSchedule(task, Date.parse("2026-10-28T09:00:00Z"), "24-hour", "Europe/Oslo"),
+    ).toMatch(/Nov.*3|3.*Nov/);
+    expect(
+      formatThreadSchedule(task, Date.parse("2026-10-29T09:00:00Z"), "24-hour", "Europe/Oslo"),
+    ).not.toMatch(/Nov/);
+    expect(
+      formatThreadSchedule(task, Date.parse("2026-11-03T09:00:01Z"), "24-hour", "Europe/Oslo"),
+    ).toBe("Due");
+  });
+
   const fixed = {
     schedule: { type: "fixed_time" as const, timeOfDay: "10:00" },
     nextRunAt: "2026-10-27T10:00:00Z",

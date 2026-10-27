@@ -22,6 +22,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -1128,6 +1129,59 @@ it.effect("queues a goal clear without stopping work when no goal drives it", ()
           started: ["first"],
           stopRequested: false,
         });
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("promoting a held queued message clears the delivered shell flag", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, layer, startFirstTurn, send } = yield* goalHarness("held-queue-promote");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = yield* startFirstTurn;
+        yield* send("queued", "Review this next", "queue");
+        const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        )!;
+        const hold = yield* sink.write({
+          events: [
+            {
+              type: "run.updated",
+              id: EventId.make("hold-for-promote"),
+              threadId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...queued, queueHeld: true },
+            },
+          ],
+        });
+        const heldItem = shellStreamItemFromThreadShell({
+          stored: hold[0]!,
+          shell: yield* orchestrator.getThreadShell(threadId),
+        });
+        assert.equal(
+          heldItem?.kind === "thread.updated" ? heldItem.thread.hasHeldQueuedMessages : undefined,
+          true,
+        );
+        const result = yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote-held"),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: started[0]!.runId,
+        });
+        yield* worker.drain();
+        const item = shellStreamItemFromThreadShell({
+          stored: result.storedEvents.at(-1)!,
+          shell: yield* orchestrator.getThreadShell(threadId),
+        });
+        assert.equal(
+          item?.kind === "thread.updated" ? item.thread.hasHeldQueuedMessages : undefined,
+          false,
+        );
       }).pipe(Effect.provide(layer));
     }),
   ),

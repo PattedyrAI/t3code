@@ -15,6 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { PrimaryConnectionTarget } from "../connection/model.ts";
 import { v2Now, v2ShellSnapshot, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { presentThreadShell } from "./models.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import { childThreadInputsTitle, createEnvironmentThreadShellAtoms } from "./threadShell.ts";
 
@@ -53,6 +54,25 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
 }
 
 describe("v2 thread shell lists", () => {
+  it("refreshes the presented held-queue flag from shell deltas and keeps older metadata unknown", () => {
+    let snapshot = v2ShellSnapshot;
+    expect(presentThreadShell(environmentId, v2ThreadShell).hasHeldQueuedMessages).toBeUndefined();
+    for (const [index, held] of [true, false, true, false].entries()) {
+      snapshot = applyShellStreamEvent(snapshot, {
+        kind: "thread.updated",
+        location: "active",
+        sequence: index + 1,
+        thread: { ...v2ThreadShell, hasHeldQueuedMessages: held },
+      });
+      expect(
+        presentThreadShell(
+          environmentId,
+          snapshot.threads.find((row) => row.id === v2ThreadShell.id)!,
+        ).hasHeldQueuedMessages,
+      ).toBe(held);
+    }
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {

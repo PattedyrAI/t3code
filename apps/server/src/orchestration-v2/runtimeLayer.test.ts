@@ -4839,7 +4839,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const before = yield* orchestrator.getThreadProjection(threadId);
       const activeRun = before.runs[0]!;
       const queuedRun = before.runs[1]!;
-      yield* orchestrator.dispatch({
+      assert.isFalse((yield* orchestrator.getThreadShell(threadId))?.hasHeldQueuedMessages);
+      const stopped = yield* orchestrator.dispatch({
         type: "run.interrupt",
         commandId: CommandId.make(`${threadId}:interrupt`),
         threadId,
@@ -4853,6 +4854,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal(after.runs.find((run) => run.id === queuedRun.id)?.status, "queued");
       assert.isTrue(after.runs.find((run) => run.id === queuedRun.id)?.queueHeld);
       assert.isFalse(after.turnItems.some((item) => item.runId === queuedRun.id));
+      const heldShell = yield* orchestrator.getThreadShell(threadId);
+      assert.isTrue(heldShell?.hasHeldQueuedMessages);
+      const heldItem = shellStreamItemFromThreadShell({
+        stored: stopped.storedEvents.at(-1)!,
+        shell: heldShell,
+      });
+      assert.equal(
+        heldItem?.kind === "thread.updated" ? heldItem.thread.hasHeldQueuedMessages : undefined,
+        true,
+      );
+      const cancelled = yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`${threadId}:cancel-held`),
+        threadId,
+        runId: queuedRun.id,
+      });
+      const clearedItem = shellStreamItemFromThreadShell({
+        stored: cancelled.storedEvents.at(-1)!,
+        shell: yield* orchestrator.getThreadShell(threadId),
+      });
+      assert.equal(
+        clearedItem?.kind === "thread.updated"
+          ? clearedItem.thread.hasHeldQueuedMessages
+          : undefined,
+        false,
+      );
     }),
   );
 
@@ -5007,6 +5034,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         assert.isTrue((yield* maintenance.rebuild).valid);
         assert.equal(yield* orchestrator.resumeQueuedRuns, 0);
+        assert.isTrue((yield* orchestrator.getThreadShell(threadId))?.hasHeldQueuedMessages);
         const held = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           held.runs.map((run) => run.status),
@@ -5049,8 +5077,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           commandId: CommandId.make(`${threadId}:resume`),
           threadId,
         };
+        const release = yield* orchestrator.dispatch(resume);
         yield* orchestrator.dispatch(resume);
-        yield* orchestrator.dispatch(resume);
+        const releaseItem = shellStreamItemFromThreadShell({
+          stored: release.storedEvents.at(-1)!,
+          shell: yield* orchestrator.getThreadShell(threadId),
+        });
+        assert.equal(
+          releaseItem?.kind === "thread.updated"
+            ? releaseItem.thread.hasHeldQueuedMessages
+            : undefined,
+          false,
+        );
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(resumed.runs.find((run) => run.id === second.id)?.status, "starting");
         assert.equal(resumed.runs.find((run) => run.id === first.id)?.status, "queued");

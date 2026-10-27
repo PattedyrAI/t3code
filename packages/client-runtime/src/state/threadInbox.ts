@@ -1,7 +1,7 @@
 // @effect-diagnostics globalTimers:off - Shelf placement timers run in web and native clients, outside an Effect runtime.
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
-import { effectiveSnoozed, threadRaisedHandWhileSnoozed } from "./threadSettled.ts";
+import { effectiveSnoozed } from "./threadSettled.ts";
 import type { ScheduledTask } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 
@@ -21,6 +21,7 @@ export function formatThreadSchedule(
     if (minutes <= 0) return "Due";
     return minutes < 60 ? `in ${minutes}m` : `in ${Math.ceil(minutes / 60)}h`;
   }
+  if (due <= now) return "Due";
   if (timeZone === undefined) return "Timezone unknown";
   try {
     const dayKey = `${timeZone}:day`;
@@ -35,7 +36,8 @@ export function formatThreadSchedule(
       scheduleFormatters.set(dayKey, dayFormatter);
     }
     const anotherDay = dayFormatter.format(due) !== dayFormatter.format(now);
-    const key = `${timeZone}:${timestampFormat}:${anotherDay}`;
+    const includeDate = due - now >= 6 * 24 * 60 * 60_000;
+    const key = `${timeZone}:${timestampFormat}:${anotherDay}:${includeDate}`;
     let formatter = scheduleFormatters.get(key);
     if (formatter === undefined) {
       formatter = new Intl.DateTimeFormat(undefined, {
@@ -44,6 +46,7 @@ export function formatThreadSchedule(
         minute: "2-digit",
         timeZoneName: "short",
         ...(anotherDay ? { weekday: "short" } : {}),
+        ...(includeDate ? { month: "short", day: "numeric" } : {}),
         ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
       });
       scheduleFormatters.set(key, formatter);
@@ -168,7 +171,12 @@ type ThreadScheduleBinding = {
 
 type ScheduledThreadInput = WorkingThreadInput &
   Pick<EnvironmentThreadShell, "id"> &
-  Partial<Pick<EnvironmentThreadShell, "settledAt" | "pendingGuestMessageCount" | "source">>;
+  Partial<
+    Pick<
+      EnvironmentThreadShell,
+      "settledAt" | "pendingGuestMessageCount" | "source" | "hasHeldQueuedMessages"
+    >
+  >;
 
 export function threadRaisedHandWhileSettled(
   thread: ScheduledThreadInput,
@@ -176,19 +184,19 @@ export function threadRaisedHandWhileSettled(
 ): boolean {
   if (!tasks.some((task) => task.enabled && task.threadId === thread.id)) return false;
   if (
-    threadRaisedHandWhileSnoozed({ ...thread, snoozedAt: thread.settledAt ?? null }) ||
-    (thread.interactionMode === "plan" && thread.hasActionableProposedPlan)
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest != null ||
+    thread.source?.pendingRuntimeRequest != null ||
+    (thread.pendingGuestMessageCount ?? 0) > 0
   )
     return true;
-  const failedAt =
-    thread.latestRun?.status === "failed"
-      ? (thread.latestRun.completedAt ?? thread.runtime?.updatedAt)
-      : thread.runtime?.lastError != null
-        ? thread.runtime.updatedAt
-        : undefined;
+  const completedAt = thread.latestRun?.completedAt;
   return (
-    failedAt !== undefined &&
-    (thread.settledAt == null || Date.parse(failedAt) > Date.parse(thread.settledAt))
+    completedAt != null &&
+    (thread.settledAt == null || Date.parse(completedAt) > Date.parse(thread.settledAt)) &&
+    (thread.latestRun?.status === "failed" ||
+      (thread.interactionMode === "plan" && thread.hasActionableProposedPlan))
   );
 }
 
@@ -219,7 +227,7 @@ export function resolveThreadSchedule<T extends ThreadScheduleBinding>(
   if (
     working ||
     hasQueuedMessages ||
-    thread.latestRun?.status === "queued" ||
+    thread.hasHeldQueuedMessages === true ||
     thread.hasPendingApprovals ||
     thread.hasPendingUserInput ||
     thread.pendingSubagentRequest != null ||

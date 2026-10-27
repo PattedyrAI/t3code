@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { useSnoozeWakeClock, useThreadJumpHintsVisible } from "./Sidebar.logic";
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import * as DateTime from "effect/DateTime";
 import { partitionSidebarThreads } from "./Sidebar";
 import { makeThreadFixture } from "../test-fixtures";
 import {
@@ -78,17 +80,13 @@ it("partitions Scheduled sessions in next-run order with stable ids and unknown 
 
 it("keeps a held queued session in the web inbox instead of Scheduled", () => {
   const environmentId = EnvironmentId.make("queued-environment");
-  const thread = {
-    ...makeThreadFixture({ id: ThreadId.make("queued"), environmentId, runtime: null }),
-    latestRun: {
-      runId: RunId.make("held"),
-      status: "queued" as const,
-      requestedAt: "2026-10-27T08:00:00Z",
-      startedAt: null,
-      completedAt: null,
-      assistantMessageId: null,
-    },
-  };
+  const thread = presentThreadShell(environmentId, {
+    ...makeThreadFixture({ id: ThreadId.make("queued"), environmentId }).source,
+    latestRunId: null,
+    activeProviderThreadId: null,
+    status: "idle",
+    hasHeldQueuedMessages: true,
+  });
   const partition = partitionSidebarThreads({
     threads: [thread],
     schedules: new Map([[`${environmentId}:${thread.id}`, [scheduleFor(thread.id, null)]]]),
@@ -100,6 +98,51 @@ it("keeps a held queued session in the web inbox instead of Scheduled", () => {
   });
   expect(partition.scheduledThreads).toEqual([]);
   expect(partition.activeThreads.map((row) => row.id)).toEqual([thread.id]);
+});
+
+it("keeps old plans settled and places a surfaced running settled session in Working", () => {
+  const environmentId = EnvironmentId.make("settled-environment");
+  const base = makeThreadFixture({ environmentId }).source;
+  const completed = DateTime.makeUnsafe("2026-10-27T07:00:00Z");
+  const settled = DateTime.makeUnsafe("2026-10-27T08:00:00Z");
+  const threads = [
+    presentThreadShell(environmentId, {
+      ...base,
+      id: ThreadId.make("old-plan"),
+      latestRunId: RunId.make("plan"),
+      status: "completed",
+      latestRunCompletedAt: completed,
+      settledOverride: "settled",
+      settledAt: settled,
+      interactionMode: "plan",
+      hasActionableProposedPlan: true,
+    }),
+    presentThreadShell(environmentId, {
+      ...base,
+      id: ThreadId.make("running"),
+      latestRunId: RunId.make("active"),
+      activeRunId: RunId.make("active"),
+      status: "running",
+      settledOverride: "settled",
+      settledAt: settled,
+      pendingGuestMessageCount: 1,
+    }),
+  ];
+  const partition = partitionSidebarThreads({
+    threads,
+    schedules: new Map(
+      threads.map((thread) => [`${environmentId}:${thread.id}`, [scheduleFor(thread.id, null)]]),
+    ),
+    serverConfigs: new Map([
+      [environmentId, { environment: { capabilities: { threadSettlement: true } } } as never],
+    ]),
+    scopedProjectKeys: null,
+    optimisticDrop: null,
+    workingShelfEnabled: true,
+    clockKey: "settled",
+  });
+  expect(partition.settledThreads.map((row) => row.id)).toEqual(["old-plan"]);
+  expect(partition.workingThreads.map((row) => row.id)).toEqual(["running"]);
 });
 
 const MOUNTED_AT_MS = Date.parse("2026-10-24T08:00:00.000Z");

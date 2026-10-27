@@ -11,6 +11,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellJson,
+  OrchestrationV2ThreadShell,
   OrchestrationV2SubagentJson,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
@@ -474,6 +475,13 @@ describe("thread open stats", () => {
     const decode = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
+    expect(decode(shell).hasHeldQueuedMessages).toBeUndefined();
+    expect(decode({ ...shell, hasHeldQueuedMessages: true }).hasHeldQueuedMessages).toBe(true);
+    const { hasHeldQueuedMessages: _held, ...olderFields } = OrchestrationV2ThreadShell.fields;
+    const olderClient = Schema.decodeUnknownSync(Schema.Struct(olderFields));
+    expect(olderClient(decode({ ...shell, hasHeldQueuedMessages: true }))).not.toHaveProperty(
+      "hasHeldQueuedMessages",
+    );
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
   });
 });

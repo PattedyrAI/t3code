@@ -37,6 +37,7 @@ import {
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
   resolveThreadListV2SnoozeMenuSelection,
+  resolveThreadListV2SwipeActions,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
@@ -123,7 +124,18 @@ describe("scheduled shelf", () => {
       { snoozedAt: task.createdAt, snoozedUntil: "2026-10-27T12:00:00Z" },
       { hasPendingApprovals: true },
       { hasPendingUserInput: true },
-      { interactionMode: "plan" as const, hasActionableProposedPlan: true },
+      {
+        interactionMode: "plan" as const,
+        hasActionableProposedPlan: true,
+        latestRun: {
+          runId: RunId.make("plan"),
+          status: "completed" as const,
+          requestedAt: null,
+          startedAt: null,
+          completedAt: "2026-10-27T08:01:00Z",
+          assistantMessageId: null,
+        },
+      },
     ])
       expect(build({ ...idle(), ...patch }).scheduledCount).toBe(0);
     const pinned = build({ ...idle(), pinnedAt: task.createdAt });
@@ -149,35 +161,97 @@ describe("scheduled shelf", () => {
     for (const patch of [
       { hasPendingApprovals: true },
       { hasPendingUserInput: true },
-      { interactionMode: "plan" as const, hasActionableProposedPlan: true },
+      {
+        interactionMode: "plan" as const,
+        hasActionableProposedPlan: true,
+        latestRun: {
+          runId: RunId.make("plan"),
+          status: "completed" as const,
+          requestedAt: null,
+          startedAt: null,
+          completedAt: "2026-10-27T08:01:00Z",
+          assistantMessageId: null,
+        },
+      },
     ]) {
       const actionable = build({ ...settled, ...patch });
       expect(actionable.settledCount).toBe(0);
       expect(actionable.items[0]?.variant).toBe("card");
     }
-    const failure = (updatedAt: string) => ({
-      ...settled,
-      runtime: {
-        status: "failed" as const,
-        activeRunId: null,
-        providerInstanceId: task.modelSelection.instanceId,
-        providerName: "Codex",
-        lastError: "Run failed",
-        updatedAt,
-      },
-    });
+    const failure = (completedAt: string) =>
+      presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          id,
+          status: "failed",
+          latestRunId: RunId.make("failed"),
+          latestRunCompletedAt: DateTime.makeUnsafe(completedAt),
+          settledOverride: "settled",
+          settledAt: DateTime.makeUnsafe(task.createdAt),
+          updatedAt: DateTime.makeUnsafe("2026-10-27T09:00:00Z"),
+          lastError: "Run failed",
+        }),
+      );
     expect(build(failure("2026-10-27T08:01:00Z")).settledCount).toBe(0);
-    const reportedError = failure("2026-10-27T08:01:00Z");
-    const actionableError = build({
-      ...reportedError,
-      runtime: { ...reportedError.runtime, status: "idle" },
-    });
-    expect(actionableError.workingCount).toBe(0);
-    expect(actionableError.items[0]?.variant).toBe("card");
+    const oldError = build(
+      presentThreadShell(
+        environmentId,
+        makeRawThreadShell({
+          id,
+          status: "idle",
+          latestRunId: RunId.make("old"),
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-10-27T07:00:00Z"),
+          settledOverride: "settled",
+          settledAt: DateTime.makeUnsafe(task.createdAt),
+          updatedAt: DateTime.makeUnsafe("2026-10-27T09:00:00Z"),
+          lastError: "Old failure retained through a title edit",
+        }),
+      ),
+    );
+    expect(oldError.settledCount).toBe(1);
     expect(build(failure("2026-10-27T07:59:00Z")).settledCount).toBe(1);
     expect(
       build({ ...settled, hasPendingApprovals: true }, [{ ...task, enabled: false }]).settledCount,
     ).toBe(1);
+  });
+  it("shows a surfaced running settled session in Working and offers Un-settle", () => {
+    const running = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        id,
+        settledOverride: "settled",
+        settledAt: DateTime.makeUnsafe(task.createdAt),
+        status: "running",
+        latestRunId: RunId.make("running"),
+        activeRunId: RunId.make("running"),
+        pendingGuestMessageCount: 1,
+      }),
+    );
+    const layout = build(running);
+    expect(layout.settledCount).toBe(0);
+    expect(layout.workingCount).toBe(1);
+    expect(
+      resolveThreadListV2SwipeActions({
+        settledOverride: running.settledOverride,
+        settlementSupported: true,
+        snoozeSupported: false,
+        snoozable: false,
+      }).primary,
+    ).toBe("unsettle");
+    const oldPlan = presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        id,
+        settledOverride: "settled",
+        settledAt: DateTime.makeUnsafe(task.createdAt),
+        status: "completed",
+        latestRunId: RunId.make("plan"),
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-10-27T07:00:00Z"),
+        interactionMode: "plan",
+        hasActionableProposedPlan: true,
+      }),
+    );
+    expect(build(oldPlan).settledCount).toBe(1);
   });
   it("orders Scheduled sessions by due time, with stable ids and unknown times last", () => {
     const rows = ["unknown", "late", "b", "a"].map((name) => ({
@@ -224,17 +298,7 @@ describe("scheduled shelf", () => {
     expect(local.scheduledCount).toBe(0);
     expect(local.items[0]?.variant).toBe("card");
     const held = build(
-      {
-        ...idle(),
-        latestRun: {
-          runId: RunId.make("held"),
-          status: "queued",
-          requestedAt: task.createdAt,
-          startedAt: null,
-          completedAt: null,
-          assistantMessageId: null,
-        },
-      },
+      presentThreadShell(environmentId, makeRawThreadShell({ id, hasHeldQueuedMessages: true })),
       [task],
       true,
     );

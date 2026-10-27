@@ -1132,6 +1132,7 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly has_held_queued_messages: number;
 };
 
 type ShellRunRow = {
@@ -1681,6 +1682,9 @@ export function threadShellFromProjection(
     // Thread detail owns message bodies. Keeping them out of shell rows makes
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
+    hasHeldQueuedMessages: projection.runs.some(
+      (run) => run.status === "queued" && run.queueHeld === true,
+    ),
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
     latestUserAuthoredMessageAt:
       userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null,
@@ -1795,6 +1799,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
+  readonly hasHeldQueuedMessages: boolean;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
@@ -1950,6 +1955,7 @@ function shellFromState(input: {
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
     latestVisibleMessage: null,
+    hasHeldQueuedMessages: input.state.hasHeldQueuedMessages,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
     hasActionableProposedPlan: input.state.hasActionableProposedPlan,
@@ -5902,6 +5908,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY secret.updated_at DESC, secret.turn_item_id DESC
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
+              EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs held
+                WHERE held.thread_id = t.thread_id AND held.status = 'queued'
+                  AND json_extract(held.payload_json, '$.queueHeld') IS 1
+              ) AS has_held_queued_messages,
               (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
@@ -6448,6 +6459,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.last_error,
           ),
           pendingRuntimeRequest,
+          hasHeldQueuedMessages: row.has_held_queued_messages === 1,
           latestUserMessageAt:
             row.latest_user_message_at === null
               ? null

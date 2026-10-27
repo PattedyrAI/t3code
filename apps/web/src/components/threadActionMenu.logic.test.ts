@@ -7,7 +7,7 @@ const baseState: ThreadActionMenuState = {
   branch: null,
   projectFilter: null,
   isPinned: false,
-  isSettled: false,
+  settledOverride: null,
   autoSettleEnabled: true,
   isSnoozed: false,
   canSnoozeNow: true,
@@ -33,7 +33,7 @@ describe("buildThreadActionMenuItems", () => {
         ...baseState,
         canOperate: false,
         isPinned: reversed,
-        isSettled: reversed,
+        settledOverride: reversed ? "settled" : null,
         isSnoozed: reversed,
       });
       const expected = reversed
@@ -64,6 +64,12 @@ describe("buildThreadActionMenuItems", () => {
       ).toBe(true);
     },
   );
+
+  it("offers Un-settle for a surfaced row whose durable placement is still settled", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, settledOverride: "settled" });
+    expect(items.find((item) => item.id === "unsettle")?.label).toMatch(/settle/i);
+    expect(items.some((item) => item.id === "settle")).toBe(false);
+  });
 
   it("disables archive while the thread is running", () => {
     const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(

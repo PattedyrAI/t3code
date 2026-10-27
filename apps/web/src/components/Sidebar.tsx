@@ -634,7 +634,7 @@ export function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           : section === "pinned"
             ? pinned
             : (() => {
-                if (settledAttention) return active;
+                if (settledAttention) return inbox(thread);
                 const task = resolveThreadSchedule(
                   thread,
                   input.schedules.get(threadKey) ?? [],
@@ -2447,7 +2447,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
@@ -2474,7 +2473,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }
                 : null,
               isPinned,
-              isSettled,
+              settledOverride: thread.settledOverride,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
