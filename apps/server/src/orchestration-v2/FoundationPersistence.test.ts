@@ -2618,10 +2618,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
               yield* outbox.claimNext({ workerId: "crashed-worker", leaseDurationMs: 30_000 }),
             ),
           );
-          yield* outbox.reconcileAfterProcessLoss;
-          const requeued = yield* outbox.get(stopEffectId);
-          assert.isTrue(Option.isSome(requeued));
-          if (Option.isSome(requeued)) assert.equal(requeued.value.status, "pending");
+          assert.equal((yield* outbox.reconcileAfterProcessLoss).requeued, 1);
         }
 
         const layerExecutor = Layer.succeed(
@@ -2663,6 +2660,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             Option.isSome(yield* Fiber.join(turn)),
             "provider-turn.start never ran behind the hung delegated-tasks.stop",
           );
+          const stop = yield* outbox.get(stopEffectId);
+          assert.isTrue(Option.isSome(stop));
+          if (Option.isSome(stop)) {
+            assert.equal(stop.value.status, "failed");
+            assert.include(stop.value.lastError ?? "", "Timed out");
+          }
         }).pipe(
           Effect.provide(layerWorker),
           Effect.scoped,
