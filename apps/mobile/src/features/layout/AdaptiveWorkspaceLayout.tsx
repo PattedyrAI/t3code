@@ -9,17 +9,13 @@ import type {
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
-import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
-  use,
-  useDeferredValue,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+  NavigationContext,
+  NavigationRouteContext,
+  useNavigation,
+  useNavigationState,
+} from "@react-navigation/native";
+import { use, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
@@ -124,39 +120,11 @@ export function useRegisterWorkspaceInspector(render: (() => ReactNode) | undefi
     );
   })();
 
-  const focusedRef = useRef(false);
-  const deactivateRef = useRef<(() => void) | null>(null);
-
-  const syncRegistration = useEffectEvent(() => {
-    if (!focusedRef.current || wrappedRender === undefined) {
-      deactivateRef.current?.();
-      return;
-    }
-    deactivateRef.current = registerWorkspaceInspector(wrappedRender);
-  });
-
-  useFocusEffect(() => {
-    focusedRef.current = true;
-    syncRegistration();
-    return () => {
-      focusedRef.current = false;
-      syncRegistration();
-    };
-  });
-
-  useEffect(() => {
-    if (focusedRef.current) {
-      syncRegistration();
-    }
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed pane content replaces its existing native workspace registration.
-  }, [wrappedRender]);
-
-  useEffect(
-    () => () => {
-      deactivateRef.current?.();
-      deactivateRef.current = null;
-    },
-    [],
+  // useFocusEffect re-runs when the renderer changes while focused, so the
+  // pane always shows this render's content, and its cleanup deactivates on
+  // blur and unmount.
+  useFocusEffect(() =>
+    wrappedRender === undefined ? undefined : registerWorkspaceInspector(wrappedRender),
   );
 }
 
@@ -354,6 +322,24 @@ function AdaptiveWorkspaceLayoutContent(
       return null;
     }
   })();
+  const workspaceRouteName = useNavigationState(
+    (state) => state?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
+  );
+  // Opening a review or the files route reveals its inspector once per route
+  // and thread. Coming back to that route from a screen pushed over it keeps
+  // the user's choice, so the last revealed key is not cleared on other routes.
+  const inspectorRevealKey =
+    (workspaceRouteName === "ThreadReview" ||
+      (workspaceRouteName === "ThreadFiles" && fileInspector.supported)) &&
+    selectedThreadKey !== null
+      ? `${props.workspaceRouteKey}:${selectedThreadKey}`
+      : null;
+  const [revealedInspectorKey, setRevealedInspectorKey] = useState<string | null>(null);
+  if (inspectorRevealKey !== null && inspectorRevealKey !== revealedInspectorKey) {
+    setRevealedInspectorKey(inspectorRevealKey);
+    setFocusedAuxiliaryPaneRole("inspector");
+    setFileInspectorPreferredVisible(true);
+  }
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly render: () => ReactNode;
     readonly active: boolean;
