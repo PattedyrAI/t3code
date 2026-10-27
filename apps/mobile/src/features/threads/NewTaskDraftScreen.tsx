@@ -291,8 +291,10 @@ export function NewTaskDraftScreen(props: {
   );
   // A route naming a draft that is gone, or whose project is gone, also
   // returns to the picker.
+  const isRouteDraftMissing =
+    props.draftId !== undefined && flow.missingRouteDraftId === props.draftId;
   const isProjectPickerReturnActive =
-    (isReturningToProjectPicker && !requestedInitialProjectAvailable) || flow.routeTargetMissing;
+    (isReturningToProjectPicker && !requestedInitialProjectAvailable) || isRouteDraftMissing;
   const isIncomingShareAwaitingServerConfig = Boolean(
     incomingShare?.attachments.some((attachment) => attachment.type === "file") &&
     selectedEnvironmentServerConfig === null,
@@ -347,12 +349,11 @@ export function NewTaskDraftScreen(props: {
     }
   }, [cancelledIncomingShareId, navigation, props.incomingShareId]);
   useEffect(() => {
-    if (!isProjectPickerReturnActive) {
-      return;
-    }
     if (isReturningToProjectPicker && requestedInitialProjectAvailable) {
       // oxlint-disable-next-line react/set-state-in-effect -- Ends the return-to-picker flow once the requested project arrives from the catalog.
       setIsReturningToProjectPicker(false);
+    }
+    if (!isProjectPickerReturnActive) {
       return;
     }
     // Wait for usePreventRemove to disable before replacing, or the transfer guard swallows the fallback.
