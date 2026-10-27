@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { NavigationState } from "@react-navigation/native";
 import {
   findLinkedRoute,
+  findStackRoute,
   restoreDraftLinkState,
   shouldHandleAppLink,
   updateLinkedRoute,
@@ -129,5 +131,41 @@ describe("nested link routes", () => {
     expect(updateLinkedRoute(settingsLink, ["ConnectionsNew"], (route) => route)).toBe(
       settingsLink,
     );
+  });
+});
+
+describe("findStackRoute", () => {
+  const stack = (key: string, routes: NavigationState["routes"]) =>
+    ({
+      key,
+      index: routes.length - 1,
+      routeNames: routes.map((route) => route.name),
+      routes,
+      stale: false,
+      type: "stack",
+    }) as NavigationState;
+
+  it("finds a nested screen with the navigator that holds it", () => {
+    const root = stack("root", [
+      { key: "home", name: "Home" },
+      {
+        key: "settings",
+        name: "Settings",
+        state: stack("settings-stack", [{ key: "new-task", name: "NewTaskProject" }]),
+      },
+    ]);
+    expect(findStackRoute(root, "NewTaskProject")).toEqual({
+      navigatorKey: "settings-stack",
+      routeKey: "new-task",
+    });
+  });
+
+  it("prefers the top-most screen and reports a missing one", () => {
+    const root = stack("root", [
+      { key: "first", name: "NewTaskProject" },
+      { key: "second", name: "NewTaskProject" },
+    ]);
+    expect(findStackRoute(root, "NewTaskProject")?.routeKey).toBe("second");
+    expect(findStackRoute(root, "Thread")).toBeUndefined();
   });
 });

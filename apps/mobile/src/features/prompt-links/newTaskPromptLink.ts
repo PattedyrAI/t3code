@@ -27,7 +27,7 @@ import {
 } from "@t3tools/shared/promptLinks";
 import { Atom, type AsyncResult } from "effect/reactivity";
 
-import { findLinkedRoute, updateLinkedRoute } from "../../lib/appLinking";
+import { findLinkedRoute, findStackRoute, updateLinkedRoute } from "../../lib/appLinking";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -51,10 +51,12 @@ import {
   promptLinkSearchFromParams,
   stepPendingPromptLink,
   withoutPromptLinkParams,
-  type PendingPromptLink,
 } from "./prompt-link-model";
 
-const NEW_TASK_ROUTES = ["NewTaskProject"];
+// Found at any depth, both in the parsed link and on the live stack, so the two never disagree on
+// whether the link has landed.
+const NEW_TASK_ROUTE = "NewTaskProject";
+const NEW_TASK_ROUTES = [NEW_TASK_ROUTE];
 
 type LinkedDraftRequest = {
   readonly prompt: LinkedPrompt | null;
@@ -79,13 +81,13 @@ const shellsSettledAtom = Atom.make((get) => {
   );
 }).pipe(Atom.withLabel("mobile:prompt-link-shells-settled"));
 
-let pendingLink: PendingPromptLink | null = null;
+let pendingLink: string | null = null;
 let stopWaitingForShells: (() => void) | null = null;
 
 /**
  * `new?prompt=…&repo=…` drops its params as it arrives, so the screen never sees them and each
- * opening resolves once. It resolves when its screen is on the stack and the shells have
- * settled; a newer link replaces one still waiting.
+ * opening resolves once. It resolves when its screen is on the navigation state that follows and
+ * the shells have settled; a newer link replaces one still waiting.
  */
 export function takeNewTaskPromptLink(
   state: PartialState<NavigationState> | undefined,
@@ -95,7 +97,7 @@ export function takeNewTaskPromptLink(
     route?.params as Readonly<Record<string, unknown>> | undefined,
   );
   if (search === null) return state;
-  pendingLink = { search, arrived: false };
+  pendingLink = search;
   return updateLinkedRoute(state, NEW_TASK_ROUTES, (linked) => ({
     ...linked,
     params: withoutPromptLinkParams(linked.params),
@@ -106,13 +108,13 @@ export function takeNewTaskPromptLink(
 export function resolvePendingNewTaskPromptLink(state: NavigationState | undefined): void {
   if (pendingLink === null) return;
   const step = stepPendingPromptLink(pendingLink, {
-    screenOnStack: state?.routes.some((route) => route.name === "NewTaskProject") === true,
+    screenOnStack: findStackRoute(state, NEW_TASK_ROUTE) !== undefined,
     shellsSettled: appAtomRegistry.get(shellsSettledAtom),
   });
   if (step.pending === null) dropPendingLink();
   else pendingLink = step.pending;
   if (step.resolve !== null) resolveLink(step.resolve);
-  else if (step.pending?.arrived) {
+  else if (step.pending !== null) {
     stopWaitingForShells ??= appAtomRegistry.subscribe(shellsSettledAtom, (settled) => {
       if (settled) resolvePendingNewTaskPromptLink(rootNavigationRef.getRootState());
     });
@@ -128,11 +130,12 @@ function dropPendingLink(): void {
 /** Dispatches as the new-task screen would, so `replace` swaps that screen out. */
 function dispatchFromNewTask(action: StackActionType): void {
   const root = rootNavigationRef.getRootState();
-  const source = root?.routes.findLast((route) => route.name === "NewTaskProject")?.key;
+  const screen = findStackRoute(root, NEW_TASK_ROUTE);
+  const target = screen?.navigatorKey ?? root?.key;
   rootNavigationRef.dispatch({
     ...action,
-    ...(root ? { target: root.key } : {}),
-    ...(source ? { source } : {}),
+    ...(target ? { target } : {}),
+    ...(screen ? { source: screen.routeKey } : {}),
   });
 }
 

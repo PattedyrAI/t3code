@@ -30,30 +30,31 @@ describe("promptLinkSearchFromParams", () => {
 });
 
 describe("stepPendingPromptLink", () => {
-  const waiting = { search: "repo=t3tools%2Ft3code", arrived: false };
+  const waiting = "repo=t3tools%2Ft3code";
 
-  it("waits for the link's screen before it can be abandoned", () => {
+  it("drops a link whose screen is missing from the first state after it was parsed", () => {
     expect(stepPendingPromptLink(waiting, { screenOnStack: false, shellsSettled: true })).toEqual({
-      pending: waiting,
+      pending: null,
       resolve: null,
     });
   });
 
-  it("holds an arrived link until the shells settle, then resolves it once", () => {
-    const arrived = stepPendingPromptLink(waiting, { screenOnStack: true, shellsSettled: false });
-    expect(arrived).toEqual({ pending: { ...waiting, arrived: true }, resolve: null });
-    expect(
-      stepPendingPromptLink(arrived.pending!, { screenOnStack: true, shellsSettled: true }),
-    ).toEqual({ pending: null, resolve: waiting.search });
+  it("holds a link on its screen until the shells settle, then resolves it once", () => {
+    expect(stepPendingPromptLink(waiting, { screenOnStack: true, shellsSettled: false })).toEqual({
+      pending: waiting,
+      resolve: null,
+    });
+    expect(stepPendingPromptLink(waiting, { screenOnStack: true, shellsSettled: true })).toEqual({
+      pending: null,
+      resolve: waiting,
+    });
   });
 
   it("drops a link whose screen was left while the shells were loading", () => {
-    expect(
-      stepPendingPromptLink(
-        { ...waiting, arrived: true },
-        { screenOnStack: false, shellsSettled: false },
-      ),
-    ).toEqual({ pending: null, resolve: null });
+    expect(stepPendingPromptLink(waiting, { screenOnStack: false, shellsSettled: false })).toEqual({
+      pending: null,
+      resolve: null,
+    });
   });
 });
 
