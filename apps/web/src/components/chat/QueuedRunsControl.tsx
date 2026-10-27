@@ -275,14 +275,14 @@ export function QueuedRunsControl({
                 ) : null}
               </div>
               <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
-                {isEditing ? null : (
+                {canSend && !isEditing ? (
                   <>
                     <Tooltip>
                       <TooltipTrigger render={<span className="flex shrink-0" />}>
                         <Button
                           size="xs"
                           variant="ghost-muted"
-                          disabled={item.runId === null || busyRunId !== null || !canSend}
+                          disabled={item.runId === null || busyRunId !== null}
                           onClick={() => {
                             if (item.runId !== null) {
                               void sendQueuedMessage(item.runId);
@@ -299,7 +299,7 @@ export function QueuedRunsControl({
                     </Tooltip>
                     <Separator orientation="vertical" className="mx-2 h-4" />
                   </>
-                )}
+                ) : null}
                 {item.pending ? (
                   <span className="flex items-center gap-1 px-1">
                     <Clock3Icon aria-hidden className="size-3" />

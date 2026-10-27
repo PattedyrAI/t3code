@@ -186,7 +186,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
         return (
-          <View key={run.id} className="border-b border-border bg-sheet">
+          <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
             <QueueRowSwipeable
               enabled={busyRunId === null && controls.canDismiss}
               background={theme["--color-sheet"]}
@@ -266,11 +266,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   // Outside the edit row and full row height, so a near miss never opens the editor.
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={
-                      workflow?.canSendNow
-                        ? `Send message ${index + 1} now`
-                        : `Steer with message ${index + 1} now`
-                    }
+                    accessibilityLabel={`Send now, queued message ${index + 1}`}
                     disabled={!controls.canSend}
                     onPress={() => void act(run.id, "steer")}
                     className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
