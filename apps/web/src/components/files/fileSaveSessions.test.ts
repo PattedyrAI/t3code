@@ -121,6 +121,27 @@ describe("file save sessions", () => {
     expect(h.writes()).toEqual([[target, "draft"]]);
   });
 
+  it("queues a recovered draft that a retired session will overwrite with a newer one", async () => {
+    using h = setup();
+    let finishWrite = () => {};
+    h.persist.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishWrite = () => resolve(AsyncResult.success(undefined));
+        }),
+    );
+    const release = h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "X");
+    await vi.advanceTimersByTimeAsync(500);
+    h.sessions.change(target, "Y");
+    release();
+    h.state.unsaved = "X";
+    h.sessions.acquire(target, h.onPendingChange);
+    finishWrite();
+    await vi.runAllTimersAsync();
+    expect(h.writes().at(-1)).toEqual([target, "X"]);
+  });
+
   it("stops notifying a surface's listener once it releases a shared session", async () => {
     using h = setup();
     const retiredListener = vi.fn();

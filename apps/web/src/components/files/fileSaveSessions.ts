@@ -49,14 +49,15 @@ interface FileSaveSession {
  */
 export function createFileSaveSessions(deps: FileSaveSessionDeps) {
   const sessions = new Map<string, FileSaveSession>();
-  // A disposed session may still be writing its final flush; a replacement
-  // session must not queue that same draft a second time.
-  const inFlight = new Map<string, string>();
+  // The draft a disposed session will write last. A replacement session must
+  // not queue that same draft a second time, but must queue any other draft:
+  // the retired session would otherwise overwrite it.
+  const retiring = new Map<string, string>();
 
   const recover = (key: string, target: FileSaveTarget, coordinator: FileSaveCoordinator) => {
     if (!deps.canPersist(target)) return;
     const unsaved = deps.readUnsaved(target);
-    if (unsaved !== null && inFlight.get(key) !== unsaved) coordinator.change(unsaved);
+    if (unsaved !== null && retiring.get(key) !== unsaved) coordinator.change(unsaved);
   };
 
   const create = (key: string, target: FileSaveTarget): FileSaveSession => {
@@ -71,18 +72,19 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
         for (const listener of listeners.keys()) listener(target.relativePath, pending);
       },
       persist: async (contents) => {
-        inFlight.set(key, contents);
         let succeeded = false;
         try {
           const result = await deps.persist(target, contents);
           succeeded = result._tag === "Success";
           return result;
         } finally {
-          if (inFlight.get(key) === contents) inFlight.delete(key);
-          // A replacement session skipped this draft while it was in flight,
-          // and a disposed session never retries, so the live one picks it up.
           const live = sessions.get(key);
-          if (!succeeded && live && live !== session) recover(key, target, live.coordinator);
+          if (live !== session && retiring.get(key) === contents) {
+            retiring.delete(key);
+            // A replacement session skipped this draft, and a disposed session
+            // never retries, so the live one picks it up.
+            if (!succeeded && live) recover(key, target, live.coordinator);
+          }
         }
       },
       onConfirmed: (contents) => deps.confirm(target, contents),
@@ -116,6 +118,8 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       }
       sessions.delete(key);
       session.unsubscribeWritable();
+      const last = session.coordinator.unconfirmedContents;
+      if (last !== null && deps.canPersist(target)) retiring.set(key, last);
       session.coordinator.dispose();
     };
   };

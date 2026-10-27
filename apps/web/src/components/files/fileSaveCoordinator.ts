@@ -29,6 +29,11 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.schedule(this.options.debounceMs);
   }
 
+  /** The newest contents not yet written, which is the last write this coordinator will make. */
+  get unconfirmedContents(): string | null {
+    return this.latestRevision === this.confirmedRevision ? null : this.latestContents;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.clearTimer();
