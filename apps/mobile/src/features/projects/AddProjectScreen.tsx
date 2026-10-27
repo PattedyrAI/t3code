@@ -296,8 +296,9 @@ function useBrowsePathInput(environment: EnvironmentOption | null, pinnedDirecto
     getAddProjectInitialQuery(environmentBaseDirectory),
     pinnedDirectoryName,
   );
-  // A path belongs to the host it was typed or browsed for. Another host shows its own
-  // default, and coming back restores the path, so a host that drops out briefly loses nothing.
+  // Only the last typed or browsed path is kept, tagged with its host. Other hosts show their
+  // own default; a host that drops out briefly (null) keeps showing the path, and returning to
+  // the tagged host restores it unless the path was edited on another host meanwhile.
   const [pathState, setPathState] = useState({ environmentId, path: seedPath });
   const pathInput =
     environmentId === null || pathState.environmentId === environmentId ? pathState.path : seedPath;
