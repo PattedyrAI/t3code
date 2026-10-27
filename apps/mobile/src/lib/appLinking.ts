@@ -59,3 +59,26 @@ export function findLinkedRoute(
   }
   return undefined;
 }
+
+/** Rewrites the first route named one of `names`, keeping every untouched branch of the state. */
+export function updateLinkedRoute(
+  state: LinkState | undefined,
+  names: ReadonlyArray<string>,
+  update: (route: LinkRoute) => LinkRoute,
+): LinkState | undefined {
+  if (!state) return state;
+  for (const [index, route] of state.routes.entries()) {
+    let next: LinkRoute | undefined;
+    if (names.includes(route.name)) next = update(route);
+    else if (isLinkState(route.state)) {
+      const nested = updateLinkedRoute(route.state, names, update);
+      if (nested !== route.state) next = { ...route, state: nested };
+    }
+    if (next) {
+      const routes = state.routes.slice();
+      routes[index] = next;
+      return { ...state, routes };
+    }
+  }
+  return state;
+}

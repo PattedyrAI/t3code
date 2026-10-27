@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { findLinkedRoute, restoreDraftLinkState, shouldHandleAppLink } from "./appLinking";
+import {
+  findLinkedRoute,
+  restoreDraftLinkState,
+  shouldHandleAppLink,
+  updateLinkedRoute,
+} from "./appLinking";
 
 describe("shouldHandleAppLink", () => {
   it.each(["t3code://", "t3code:///", "t3code-dev://", "t3code-preview://"])(
@@ -112,5 +117,17 @@ describe("nested link routes", () => {
       autoConnect: "1",
     });
     expect(findLinkedRoute(settingsLink, ["ConnectionsNew"])).toBeUndefined();
+  });
+
+  it("rewrites a nested route without touching the rest of the state", () => {
+    const next = updateLinkedRoute(settingsLink, ["SettingsEnvironmentNew"], (route) => ({
+      ...route,
+      params: { pairingUrl: "x" },
+    }));
+    expect(findLinkedRoute(next, ["SettingsEnvironmentNew"])?.params).toEqual({ pairingUrl: "x" });
+    expect(next?.routes[0]).toBe(settingsLink.routes[0]);
+    expect(updateLinkedRoute(settingsLink, ["ConnectionsNew"], (route) => route)).toBe(
+      settingsLink,
+    );
   });
 });
