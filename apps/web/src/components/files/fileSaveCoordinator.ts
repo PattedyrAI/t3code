@@ -34,6 +34,10 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     return this.latestRevision === this.confirmedRevision ? null : this.latestContents;
   }
 
+  get writing(): boolean {
+    return this.saving;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.clearTimer();
