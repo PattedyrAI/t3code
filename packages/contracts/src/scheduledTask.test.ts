@@ -5,10 +5,24 @@ import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
+  ScheduledTaskListResult,
 } from "./scheduledTask.ts";
 
 const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
+
+it("reads legacy lists and keeps optional timezone metadata without rejecting invalid zones", () => {
+  const decode = Schema.decodeUnknownSync(ScheduledTaskListResult);
+  expect(decode({ tasks: [] })).toEqual({ tasks: [] });
+  expect(decode({ tasks: [], environmentTimeZone: "Europe/Oslo" }).environmentTimeZone).toBe(
+    "Europe/Oslo",
+  );
+  expect(decode({ tasks: [], environmentTimeZone: "invalid" }).tasks).toEqual([]);
+  const legacy = Schema.decodeUnknownSync(
+    Schema.Struct({ tasks: ScheduledTaskListResult.fields.tasks }),
+  );
+  expect(legacy({ tasks: [], environmentTimeZone: "Europe/Oslo" })).toEqual({ tasks: [] });
+});
 
 describe("ScheduledTaskSchedule", () => {
   it("keeps legacy sub-minute persisted schedules readable", () => {

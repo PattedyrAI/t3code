@@ -71,11 +71,15 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create":
-    case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":
       return { ...command, ...provenance };
+    case "message.dispatch": {
+      // Only the internal scheduler supplies task provenance; clients cannot impersonate its wakes.
+      const { scheduledTaskId: _scheduledTaskId, ...message } = command;
+      return { ...message, ...provenance };
+    }
     default:
       return command;
   }

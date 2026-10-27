@@ -1,5 +1,10 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { ScheduledTask } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
+import { environmentPresentations } from "../../state/presentation";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -27,6 +32,30 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
+const threadSchedulesAtom = Atom.make((get) => {
+  const schedules = new Map<string, ScheduledTask[]>();
+  const timeZones = new Map<EnvironmentId, string>();
+  for (const [environmentId] of get(environmentServerConfigsAtom)) {
+    if (
+      get(environmentPresentations.presentationAtom(environmentId))?.connection.phase !==
+      "connected"
+    )
+      continue;
+    const result = get(serverEnvironment.scheduledTasksLive({ environmentId, input: {} }));
+    if (!AsyncResult.isSuccess(result)) continue;
+    if (result.value.environmentTimeZone !== undefined)
+      timeZones.set(environmentId, result.value.environmentTimeZone);
+    for (const task of result.value.tasks) {
+      if (task.threadId === null) continue;
+      const key = `${environmentId}:${task.threadId}`;
+      const tasks = schedules.get(key) ?? [];
+      tasks.push(task);
+      schedules.set(key, tasks);
+    }
+  }
+  return { schedules, timeZones };
+}).pipe(Atom.withLabel("mobile-thread-schedules"));
+
 /**
  * Home's and the thread sidebar's thread list. Its result is one value a screen only reads:
  * built inline, the list's inputs stayed open to mutation across the screen's other hooks, so
@@ -51,11 +80,13 @@ export function useThreadListV2(input: {
   readonly shelfPreferencesLoaded: boolean;
   readonly workingShelfEnabled: boolean;
   readonly workingShelfExpanded: boolean;
+  readonly scheduledShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const { schedules, timeZones } = useAtomValue(threadSchedulesAtom);
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
@@ -99,6 +130,9 @@ export function useThreadListV2(input: {
     visibleCount: input.searchQuery.trim().length === 0 ? input.settledLimit : 0,
   });
   const layout = buildThreadListV2Items({
+    schedules,
+    scheduleTimeZones: timeZones,
+    scheduledShelfExpanded: input.scheduledShelfExpanded,
     pendingOrder: input.pendingOrder,
     threads: threads.filter((thread) => thread.archivedAt === null),
     environmentId: input.environmentId,
@@ -147,6 +181,9 @@ export function useThreadListV2(input: {
       (searchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(searchQuery)),
   );
   const items = buildThreadListV2ListItems({
+    scheduledCount: layout.scheduledCount,
+    scheduledShelfHeaderIndex: layout.scheduledShelfHeaderIndex,
+    scheduledShelfExpanded: input.scheduledShelfExpanded,
     items: layout.items,
     pendingTasks,
     workingCount: layout.workingCount,

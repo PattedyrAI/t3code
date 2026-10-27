@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -60,6 +61,83 @@ const layerTest = Layer.mergeAll(
     ProviderAdapterRegistry.layerFromAdapters([adapter]),
     { databaseLayer: layerDatabase, runEffectWorker: false },
   ),
+);
+
+it.effect.each(["defer_start", "queue_after_active"] as const)(
+  "scheduled %s preserves explicit placement while a user message wakes it",
+  (dispatchType) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const events = yield* EventSink.EventSinkV2;
+      for (const placement of ["settled", "snoozed"] as const) {
+        const threadId = ThreadId.make(`thread:scheduled-${placement}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create-${placement}`),
+          threadId,
+          projectId: ProjectId.make("project:scheduled"),
+          title: placement,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const now = yield* DateTime.now;
+        if (placement === "settled")
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("settle-scheduled"),
+            threadId,
+          });
+        else
+          yield* orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze-scheduled"),
+            threadId,
+            snoozedUntil: DateTime.formatIso(DateTime.add(now, { hours: 2 })),
+          });
+        const before = yield* projections.getThread(threadId);
+        const send = (scheduled: boolean) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${placement}-${scheduled}`),
+            threadId,
+            messageId: MessageId.make(`${placement}-${scheduled}`),
+            text: "Review issues",
+            attachments: [],
+            dispatchMode: { type: dispatchType },
+            createdBy: "user",
+            creationSource: "web",
+            ...(scheduled
+              ? { scheduledTaskId: ScheduledTaskId.make("task:verified-internal") }
+              : {}),
+          });
+        yield* send(true);
+        const after = yield* projections.getThread(threadId);
+        assert.equal(after?.settledOverride, before?.settledOverride);
+        assert.deepEqual(after?.settledAt, before?.settledAt);
+        assert.deepEqual(after?.unsettledAt, before?.unsettledAt);
+        assert.deepEqual(after?.snoozedUntil, before?.snoozedUntil);
+        assert.deepEqual(after?.snoozedAt, before?.snoozedAt);
+        assert.deepEqual(after?.lastSnoozeWakeAt, before?.lastSnoozeWakeAt);
+        const committed = yield* events
+          .readByCommandId({ commandId: CommandId.make(`${placement}-true`) })
+          .pipe(Stream.runCollect);
+        assert.isFalse(
+          committed.some(
+            ({ event }) => event.type === "thread.unsettled" || event.type === "thread.unsnoozed",
+          ),
+        );
+        yield* send(false);
+        const awake = yield* projections.getThreadShell(threadId);
+        assert.isNull(awake?.settledOverride);
+        assert.isNull(awake?.snoozedUntil);
+      }
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(

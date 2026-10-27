@@ -2,6 +2,36 @@
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 import { effectiveSnoozed } from "./threadSettled.ts";
+import type { ScheduledTask } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
+
+export function formatThreadSchedule(
+  task: Pick<ScheduledTask, "schedule" | "nextRunAt">,
+  now: number,
+  timestampFormat: TimestampFormat,
+  timeZone?: string,
+): string {
+  if (task.schedule.type === "webhook") return "On webhook";
+  const due = toSortableTimestamp(task.nextRunAt ?? undefined);
+  if (due === null) return "Next run unknown";
+  if (task.schedule.type === "interval") {
+    const minutes = Math.ceil((due - now) / 60_000);
+    if (minutes <= 0) return "Due";
+    return minutes < 60 ? `in ${minutes}m` : `in ${Math.ceil(minutes / 60)}h`;
+  }
+  if (timeZone === undefined) return "Timezone unknown";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone,
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+      ...(timestampFormat === "locale" ? {} : { hour12: timestampFormat === "12-hour" }),
+    }).format(due);
+  } catch {
+    return "Timezone unknown";
+  }
+}
 
 type WorkingThreadInput = Pick<
   EnvironmentThreadShell,
@@ -106,6 +136,45 @@ type TrackedInboxThread = WorkingThreadInput &
   >;
 
 type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
+
+type ThreadScheduleBinding = {
+  readonly id: string;
+  readonly threadId: string | null;
+  readonly enabled: boolean;
+  readonly nextRunAt: string | null;
+  readonly lastRunStatus: string;
+};
+
+export function resolveThreadSchedule<T extends ThreadScheduleBinding>(
+  thread: WorkingThreadInput &
+    Pick<EnvironmentThreadShell, "id"> &
+    Partial<Pick<EnvironmentThreadShell, "pendingGuestMessageCount">>,
+  tasks: readonly T[],
+  working = isThreadWorking(thread),
+): T | null {
+  if (
+    working ||
+    thread.hasPendingApprovals ||
+    thread.hasPendingUserInput ||
+    thread.pendingSubagentRequest != null ||
+    (thread.pendingGuestMessageCount ?? 0) > 0 ||
+    (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
+    thread.runtime?.lastError != null ||
+    thread.latestRun?.status === "failed"
+  )
+    return null;
+  let earliest: T | null = null;
+  for (const task of tasks) {
+    if (!task.enabled || task.threadId !== thread.id) continue;
+    if (task.lastRunStatus === "failed" || task.lastRunStatus === "running") return null;
+    const due = toSortableTimestamp(task.nextRunAt ?? undefined) ?? Infinity;
+    const previousDue = toSortableTimestamp(earliest?.nextRunAt ?? undefined) ?? Infinity;
+    if (earliest === null || due < previousDue || (due === previousDue && task.id < earliest.id)) {
+      earliest = task;
+    }
+  }
+  return earliest;
+}
 
 /**
  * How long a thread that stopped working keeps reading as working. An orchestrator

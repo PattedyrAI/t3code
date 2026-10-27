@@ -63,6 +63,7 @@ import {
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
+  ThreadListV2ScheduledShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -419,9 +420,11 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    scheduledShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleScheduledShelf,
   } = useThreadListV2ShelfPreferences();
   // Keep time in state; the compiler would cache a render-time new Date().
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -469,6 +472,7 @@ export function HomeScreen(props: HomeScreenProps) {
     shelfPreferencesLoaded,
     workingShelfEnabled,
     workingShelfExpanded,
+    scheduledShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey,
@@ -543,6 +547,16 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-scheduled-shelf") {
+      return (
+        <ThreadListV2ScheduledShelfHeader
+          count={item.count}
+          disabled={item.disabled}
+          expanded={item.expanded}
+          onToggle={toggleScheduledShelf}
+        />
+      );
+    }
     if (item.type === "v2-working-shelf") {
       return (
         <ThreadListV2WorkingShelfHeader
@@ -584,6 +598,7 @@ export function HomeScreen(props: HomeScreenProps) {
         variant={item.item.variant}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
+        scheduled={item.item.scheduleLabel !== undefined}
         pinned={item.item.pinned}
         wokeAt={item.item.wokeAt}
         snoozePresetMinute={item.snoozePresetMinute ?? ""}

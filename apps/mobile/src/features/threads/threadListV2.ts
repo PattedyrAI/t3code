@@ -18,6 +18,8 @@ import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/sh
 import {
   createInboxReturnTracker,
   isThreadWorking,
+  resolveThreadSchedule,
+  formatThreadSchedule,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "@t3tools/client-runtime/state/thread-inbox";
@@ -266,6 +268,7 @@ export function getThreadListV2OrderedSection(input: {
 }
 
 export interface ThreadListV2Item {
+  readonly scheduleLabel?: string;
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
@@ -275,6 +278,8 @@ export interface ThreadListV2Item {
 }
 
 export interface ThreadListV2Layout {
+  readonly scheduledCount: number;
+  readonly scheduledShelfHeaderIndex: number | null;
   readonly items: ThreadListV2Item[];
   readonly hiddenSettledCount: number;
   /** The settled rows the shelf may list, before its visible limit. */
@@ -321,6 +326,14 @@ export interface ThreadListV2WorkingShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2ScheduledShelfListItem {
+  readonly type: "v2-scheduled-shelf";
+  readonly key: "v2-scheduled-shelf";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly disabled: boolean;
+}
+
 export interface ThreadListV2SnoozedShelfListItem {
   readonly type: "v2-snoozed-shelf";
   readonly key: "v2-snoozed-shelf";
@@ -342,6 +355,7 @@ export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
+  | ThreadListV2ScheduledShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
 
@@ -352,6 +366,7 @@ export function isThreadListV2ListItem(value: {
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
+    value.type === "v2-scheduled-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
   );
@@ -372,6 +387,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
+        previous.item.scheduleLabel === item.item.scheduleLabel &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -389,8 +405,9 @@ export function threadListV2ListItemsAreEqual(
         previous.showTrailingDivider === item.showTrailingDivider
       );
     case "v2-working-shelf":
+    case "v2-scheduled-shelf":
       return (
-        previous.type === "v2-working-shelf" &&
+        previous.type === item.type &&
         previous.count === item.count &&
         previous.expanded === item.expanded &&
         previous.disabled === item.disabled
@@ -433,6 +450,9 @@ function resolveThreadListV2ItemTimeLabel(
 }
 
 export function buildThreadListV2ListItems(input: {
+  readonly scheduledCount?: number;
+  readonly scheduledShelfExpanded?: boolean;
+  readonly scheduledShelfHeaderIndex?: number | null;
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly workingCount?: number;
@@ -473,7 +493,9 @@ export function buildThreadListV2ListItems(input: {
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
       item,
       snoozeWakeLabelText,
-      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
+      timeLabel:
+        item.scheduleLabel ??
+        resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
       snoozePresetMinute,
       showTrailingDivider: false,
       hasQueuedMessages:
@@ -496,7 +518,9 @@ export function buildThreadListV2ListItems(input: {
   const settledCount = input.settledCount ?? 0;
   const settledShelfHeaderIndex = input.settledShelfHeaderIndex ?? null;
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
-  const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
+  const scheduledEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
+  const scheduledStart = input.scheduledShelfHeaderIndex ?? null;
+  const workingEnd = scheduledStart ?? scheduledEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
   const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
   const shelfDisabled = input.shelfPreferencesLoading === true;
@@ -509,6 +533,16 @@ export function buildThreadListV2ListItems(input: {
       disabled: shelfDisabled,
     });
     result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
+  }
+  if (scheduledStart !== null && (input.scheduledCount ?? 0) > 0) {
+    result.push({
+      type: "v2-scheduled-shelf",
+      key: "v2-scheduled-shelf",
+      count: input.scheduledCount!,
+      expanded: input.scheduledShelfExpanded === true,
+      disabled: shelfDisabled,
+    });
+    result.push(...threadItems.slice(scheduledStart, scheduledEnd));
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -564,6 +598,9 @@ function sortSettledThreadsReusingLast(
 }
 
 export function buildThreadListV2Items(input: {
+  readonly schedules?: ReadonlyMap<string, readonly import("@t3tools/contracts").ScheduledTask[]>;
+  readonly scheduleTimeZones?: ReadonlyMap<EnvironmentId, string>;
+  readonly scheduledShelfExpanded?: boolean;
   readonly pendingOrder?: PendingThreadOrder | null;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
   readonly environmentId: EnvironmentId | null;
@@ -612,6 +649,8 @@ export function buildThreadListV2Items(input: {
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
+  const scheduled: EnvironmentThreadShell[] = [];
+  const scheduleLabels = new Map<string, string>();
   const settled: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   let nextSnoozeWakeAt: string | null = null;
@@ -669,7 +708,25 @@ export function buildThreadListV2Items(input: {
     } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
       working.push(thread);
     } else {
-      active.push(thread);
+      const key = `${thread.environmentId}:${thread.id}`;
+      const task = resolveThreadSchedule(
+        thread,
+        input.schedules?.get(key) ?? [],
+        (input.isWorking ?? isThreadWorking)(thread),
+      );
+      if (task === null || hasQueuedMessages) active.push(thread);
+      else {
+        scheduled.push(thread);
+        scheduleLabels.set(
+          key,
+          formatThreadSchedule(
+            task,
+            nowMs,
+            "locale",
+            input.scheduleTimeZones?.get(thread.environmentId),
+          ),
+        );
+      }
     }
   }
 
@@ -677,7 +734,7 @@ export function buildThreadListV2Items(input: {
     // Searching lists every match by rank across shelves, as the palette and
     // the web sidebar do, then threads listed for their messages in the
     // server's order. Each row keeps its shelf's look.
-    const slim = new Set([...snoozed, ...settled]);
+    const slim = new Set([...snoozed, ...settled, ...scheduled]);
     const snoozedThreads = new Set(snoozed);
     const pinnedThreads = new Set(pinned);
     const threadByKey = new Map(
@@ -697,12 +754,17 @@ export function buildThreadListV2Items(input: {
         variant: slim.has(thread) ? "slim" : "card",
         snoozed: snoozedThreads.has(thread),
         pinned: pinnedThreads.has(thread),
+        ...(scheduleLabels.has(`${thread.environmentId}:${thread.id}`)
+          ? { scheduleLabel: scheduleLabels.get(`${thread.environmentId}:${thread.id}`)! }
+          : {}),
         wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
       })),
       hiddenSettledCount: 0,
       listedSettledThreads: [],
       workingCount: 0,
+      scheduledCount: 0,
+      scheduledShelfHeaderIndex: null,
       workingShelfHeaderIndex: null,
       snoozedCount: 0,
       snoozedShelfHeaderIndex: null,
@@ -722,6 +784,10 @@ export function buildThreadListV2Items(input: {
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
+  const visibleScheduled =
+    input.scheduledShelfExpanded === true
+      ? scheduled
+      : scheduled.filter((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey);
   const visibleWorking =
     input.workingShelfExpanded === true
       ? orderedWorking
@@ -795,6 +861,18 @@ export function buildThreadListV2Items(input: {
       isLast: false,
     });
   }
+  const scheduledShelfHeaderIndex = scheduled.length > 0 ? items.length : null;
+  for (const thread of visibleScheduled) {
+    items.push({
+      thread,
+      variant: "slim",
+      snoozed: false,
+      pinned: false,
+      wokeAt: null,
+      isLast: false,
+      scheduleLabel: scheduleLabels.get(`${thread.environmentId}:${thread.id}`)!,
+    });
+  }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
   for (const thread of visibleSnoozed) {
     items.push({
@@ -826,6 +904,8 @@ export function buildThreadListV2Items(input: {
     hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
     listedSettledThreads: listedSettled,
     workingCount: orderedWorking.length,
+    scheduledCount: scheduled.length,
+    scheduledShelfHeaderIndex,
     workingShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,
     snoozedShelfHeaderIndex,

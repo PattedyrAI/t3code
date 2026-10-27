@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -30,6 +31,26 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+
+it("strips scheduler provenance supplied by a client before dispatch", () => {
+  const command = ThreadManagementService.withCreationProvenance(
+    {
+      type: "message.dispatch",
+      commandId: CommandId.make("forged-schedule"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "User message",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "agent",
+      creationSource: "mcp",
+      scheduledTaskId: ScheduledTaskId.make("not-a-real-task"),
+    },
+    { createdBy: "user", creationSource: "web" },
+  );
+  expect(command).not.toHaveProperty("scheduledTaskId");
+  expect(command).toMatchObject({ createdBy: "user", creationSource: "web", text: "User message" });
+});
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(

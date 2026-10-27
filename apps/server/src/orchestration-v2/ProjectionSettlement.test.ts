@@ -17,6 +17,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -67,6 +68,51 @@ const createThread = Effect.fn(function* (
   });
   return threadId;
 });
+
+it.effect("enabled bound automations stay out of SQL auto-settlement candidates", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const foreign = yield* createThread("foreign-bound");
+    const ids = new Map<string, ThreadId>();
+    for (const name of ["enabled", "failed", "paused", "deleted", "unbound", "other-thread"]) {
+      const threadId = yield* createThread(name);
+      ids.set(name, threadId);
+      yield* sql`INSERT INTO scheduled_tasks ${sql.insert({
+        task_id: `task:${name}`,
+        title: name,
+        prompt: "Review",
+        enabled: name === "paused" ? 0 : 1,
+        schedule_json: JSON.stringify({ type: "interval", everyMs: 60_000 }),
+        project_id: "project:settlement",
+        thread_id: name === "unbound" ? null : name === "other-thread" ? foreign : threadId,
+        workspace_strategy_json: JSON.stringify({ type: "root" }),
+        model_selection_json: JSON.stringify(modelSelection),
+        runtime_mode: "full-access",
+        interaction_mode: "default",
+        created_by: "user",
+        creation_source: "web",
+        created_at: DateTime.formatIso(old),
+        updated_at: DateTime.formatIso(old),
+        next_run_at: DateTime.formatIso(now),
+        last_run_at: null,
+        last_run_status: name === "failed" ? "failed" : "never",
+        last_run_error: null,
+        run_count: 0,
+      })}`;
+      if (name === "deleted")
+        yield* sql`DELETE FROM scheduled_tasks WHERE task_id = 'task:deleted'`;
+    }
+    const eligible = (yield* store.getSettlementCandidates()).map((thread) => thread.id);
+    assert.sameMembers(
+      eligible,
+      ["paused", "deleted", "unbound", "other-thread"].map((name) => ids.get(name)!),
+    );
+    assert.isEmpty(yield* store.getSettlementCandidates(ids.get("enabled")!));
+    assert.isEmpty(yield* store.getSettlementCandidates(ids.get("failed")!));
+    assert.lengthOf(yield* store.getSettlementCandidates(ids.get("paused")!), 1);
+  }).pipe(Effect.provide(layerSql)),
+);
 
 const createRun = Effect.fn(function* (
   threadId: ThreadId,

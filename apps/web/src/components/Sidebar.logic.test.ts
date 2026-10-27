@@ -1166,6 +1166,24 @@ describe("Working shelf (beta)", () => {
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
     });
 
+    it("never drops into Scheduled or includes its rows in a manual order", () => {
+      const scheduled: readonly SidebarListItem[] = [
+        ...items.slice(0, -2),
+        marker("scheduled-header"),
+        row("scheduled", "scheduled"),
+        ...items.slice(-2),
+      ];
+      expect(resolveSidebarDropTarget(scheduled, "a1", "scheduled")).toBeNull();
+      expect(resolveSidebarDropVerb("active", "scheduled")).toBeNull();
+      expect(resolveSidebarDropVerb("scheduled", "active")).toBeNull();
+      expect(resolveSidebarDropTarget(scheduled, "p1", "a2")?.activeOrder).toEqual([
+        "a1",
+        "a2",
+        "p1",
+      ]);
+      expect(resolveSidebarDropTarget(scheduled, "scheduled", "p1")?.section).toBe("pinned");
+    });
+
     it.each([
       ["pinned", "p1"],
       ["active", "a2"],

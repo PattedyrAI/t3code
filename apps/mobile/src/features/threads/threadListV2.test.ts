@@ -23,6 +23,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskId,
+  type ScheduledTask,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -45,6 +47,91 @@ import {
 
 const environmentId = EnvironmentId.make("environment-1");
 const decodeThreadShell = Schema.decodeUnknownSync(OrchestrationV2ThreadShell);
+
+describe("scheduled shelf", () => {
+  const id = ThreadId.make("scheduled-session");
+  const task: ScheduledTask = {
+    id: ScheduledTaskId.make("automation"),
+    title: "Review issues",
+    prompt: "Review issues",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 7_200_000 },
+    projectId: ProjectId.make("project"),
+    threadId: id,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "web",
+    createdAt: "2026-10-27T08:00:00Z",
+    updatedAt: "2026-10-27T08:00:00Z",
+    nextRunAt: "2026-10-27T10:00:00Z",
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  };
+  const idle = () => makeThread({ id, title: "Issue review", runtime: null });
+  const build = (thread = idle(), tasks: readonly ScheduledTask[] = [task], expanded = false) =>
+    buildThreadListV2Items({
+      threads: [thread],
+      schedules: new Map([[`${environmentId}:${id}`, tasks]]),
+      environmentId: null,
+      searchQuery: "",
+      now: "2026-10-27T08:00:00Z",
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+      scheduledShelfExpanded: expanded,
+      settledShelfExpanded: true,
+      snoozedShelfExpanded: true,
+    });
+  it("collapses idle scheduled sessions and displays their next run when expanded", () => {
+    expect(build().scheduledCount).toBe(1);
+    expect(build().items).toEqual([]);
+    const open = build(idle(), [task], true);
+    expect(open.items[0]?.scheduleLabel).toBe("in 2h");
+    const items = buildThreadListV2ListItems({
+      items: open.items,
+      pendingTasks: [],
+      scheduledCount: open.scheduledCount,
+      scheduledShelfHeaderIndex: open.scheduledShelfHeaderIndex,
+      scheduledShelfExpanded: true,
+    });
+    expect(items.map((item) => item.type)).toEqual(["v2-scheduled-shelf", "v2-thread"]);
+  });
+  it("moves executions to Working and completed sessions back to Scheduled", () => {
+    const running = {
+      ...idle(),
+      runtime: {
+        status: "running" as const,
+        activeRunId: RunId.make("run"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: null,
+        updatedAt: task.updatedAt,
+      },
+    };
+    expect(build(running).workingCount).toBe(1);
+    expect(build(running).scheduledCount).toBe(0);
+    expect(build().scheduledCount).toBe(1);
+  });
+  it("preserves pin, snooze and settle; pause, delete and attention return to the inbox", () => {
+    for (const patch of [
+      { pinnedAt: task.createdAt },
+      { settledOverride: "settled" as const, settledAt: task.createdAt },
+      { snoozedAt: task.createdAt, snoozedUntil: "2026-10-27T12:00:00Z" },
+      { hasPendingApprovals: true },
+      { hasPendingUserInput: true },
+      { interactionMode: "plan" as const, hasActionableProposedPlan: true },
+    ])
+      expect(build({ ...idle(), ...patch }).scheduledCount).toBe(0);
+    expect(build(idle(), []).scheduledCount).toBe(0);
+    expect(build(idle(), [{ ...task, enabled: false }]).scheduledCount).toBe(0);
+    expect(build(idle(), [{ ...task, lastRunStatus: "failed" }]).scheduledCount).toBe(0);
+    expect(build(idle(), [{ ...task, threadId: null }]).scheduledCount).toBe(0);
+  });
+});
 
 function makeThread(
   input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "id" | "title">,

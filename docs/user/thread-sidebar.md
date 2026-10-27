@@ -127,8 +127,8 @@ Threads that are working or waiting on work they will resume from move into a co
 **Working** section below the active list.
 That includes subagents, watched pull requests, and background commands or monitors the agent
 says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
-there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
-answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
+there. A thread returns to the active list when it finishes, fails, or needs an approval or
+answer. Idle sessions with enabled automations return to Scheduled instead. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
@@ -137,6 +137,18 @@ choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
+
+### Scheduled sessions
+
+Sessions bound to enabled T3 Code scheduled tasks stay in **Scheduled** between runs, with
+their next run shown in the environment's timezone. Open a session to read its reports and
+manage all its automations, or use **Settings → Scheduled tasks** to edit, pause, resume or run
+a task. You do not need to settle the session after each run.
+
+Executions use the normal Working section and notifications. Approvals, questions, plan reviews
+and failures remain actionable. Pinning, snoozing and settling take priority over Scheduled.
+Pausing or deleting the last enabled automation returns the session to its ordinary section.
+Provider-native loops and cron jobs are separate from T3 Code scheduled tasks and are not listed here.
 
 ## Settle finished work
 

@@ -2,6 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthSessionId,
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  ScheduledTaskListResult,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -26,7 +29,9 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { Headers } from "effect/http";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import * as Schema from "effect/Schema";
+
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -121,6 +126,8 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
 } from "./ws.ts";
+
+const decodeScheduledTaskList = Schema.decodeEffect(ScheduledTaskListResult);
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -473,6 +480,120 @@ const layerConfigSources = Layer.mergeAll(
     ),
   ),
   Layer.provideMerge(NodeServices.layer),
+);
+
+it.effect.each([
+  { operate: false, withZone: true },
+  { operate: false, withZone: false },
+  { operate: true, withZone: true },
+  { operate: true, withZone: false },
+])(
+  "scheduled task RPC keeps safe metadata (operate=$operate, timezone=$withZone)",
+  ({ operate, withZone }) =>
+    Effect.gen(function* () {
+      const listed = yield* decodeScheduledTaskList({
+        ...(withZone ? { environmentTimeZone: "Europe/Oslo" } : {}),
+        tasks: [
+          {
+            id: "fixture-task",
+            title: "Review issues",
+            prompt: "Review issues",
+            enabled: true,
+            schedule: { type: "webhook", signature: null },
+            projectId: "fixture-project",
+            threadId: null,
+            workspaceStrategy: { type: "root" },
+            modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdBy: "user",
+            creationSource: "web",
+            createdAt: "2026-10-27T08:00:00Z",
+            updatedAt: "2026-10-27T08:00:00Z",
+            nextRunAt: null,
+            lastRunAt: null,
+            lastRunStatus: "never",
+            lastRunError: null,
+            runCount: 0,
+            webhook: { path: "/fixture", url: "https://example.test/fixture", hasSecret: false },
+          },
+        ],
+      });
+      const responses = yield* Queue.unbounded<ScheduledTaskListResult>();
+      const group = RpcGroup.make(
+        Rpc.make(WS_METHODS.scheduledTasksList, {
+          payload: Schema.Struct({}),
+          success: ScheduledTaskListResult,
+        }),
+      );
+      const services = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+        Layer.mock(ScheduledTasks.ScheduledTaskService)({
+          list: () => Effect.succeed({ ...listed, serverOnlyField: true }),
+        }),
+      );
+      const server = yield* RpcServer.makeNoSerialization(group, {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit"
+            ? response.exit._tag === "Success"
+              ? Queue.offer(responses, response.exit.value)
+              : Effect.die(response.exit)
+            : Effect.void,
+      }).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("read-only-schedules"),
+              subject: "fixture",
+              method: "browser-session-cookie",
+              scopes: operate
+                ? [AuthOrchestrationReadScope, AuthOrchestrationOperateScope]
+                : [AuthOrchestrationReadScope],
+            },
+            {},
+            {},
+            yield* PreviewAutomationBroker.PreviewAutomationBroker,
+            yield* ServerBrowser.ServerBrowser,
+          ).pipe(Layer.provide(services)),
+        ),
+      );
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("list"),
+        tag: WS_METHODS.scheduledTasksList,
+        payload: {},
+        headers: Headers.empty,
+      });
+      const result = yield* Queue.take(responses);
+      assert.equal(result.environmentTimeZone, withZone ? "Europe/Oslo" : undefined);
+      if (operate) assert.deepEqual(result.tasks[0]?.webhook, listed.tasks[0]?.webhook);
+      else {
+        assert.isUndefined(result.tasks[0]?.webhook);
+        assert.deepEqual(
+          Object.keys(result).sort(),
+          withZone ? ["environmentTimeZone", "tasks"] : ["tasks"],
+        );
+      }
+      assert.equal(result.tasks[0]?.title, "Review issues");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
 
 it.effect(

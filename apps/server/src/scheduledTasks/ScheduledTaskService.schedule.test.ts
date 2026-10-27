@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import * as Stream from "effect/Stream";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -94,6 +95,18 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       });
       const created = yield* service.upsert(input);
       const expectedDueAt = DateTime.formatIso(DateTime.toUtc(dueAt));
+      const listed = yield* service.list();
+      const subscribed = yield* service.subscribeList().pipe(Stream.take(1), Stream.runCollect);
+      expect(subscribed[0]?.environmentTimeZone).toBe(listed.environmentTimeZone);
+      expect(listed.environmentTimeZone).toBe(DateTime.zoneToString(DateTime.zoneMakeLocal()));
+      expect(
+        new Intl.DateTimeFormat("en-GB", {
+          timeZone: listed.environmentTimeZone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).format(DateTime.toEpochMillis(DateTime.makeUnsafe(created.task.nextRunAt!))),
+      ).toBe("09:00");
       expect(created.task.nextRunAt).toBe(expectedDueAt);
 
       yield* TestClock.setTime(DateTime.toEpochMillis(dueAt) + 1_000);

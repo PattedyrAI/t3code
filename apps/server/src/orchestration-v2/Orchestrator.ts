@@ -5108,7 +5108,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (run) => run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
-    if (projection.thread.settledOverride !== null) {
+    const scheduledDispatch = command.scheduledTaskId !== undefined;
+    if (projection.thread.settledOverride !== null && !scheduledDispatch) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
@@ -5135,7 +5136,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // Background wakes and delegated completions continue work the user already snoozed, so
     // only a message someone actually sent ends the snooze.
     const automaticWake =
-      command.notification !== undefined || command.delegatedCompletion !== undefined;
+      command.notification !== undefined ||
+      command.delegatedCompletion !== undefined ||
+      scheduledDispatch;
     if (projection.thread.snoozedUntil != null && !automaticWake) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {

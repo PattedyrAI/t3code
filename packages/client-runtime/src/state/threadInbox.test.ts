@@ -4,11 +4,98 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   createInboxReturnTracker,
   isThreadWorking,
+  resolveThreadSchedule,
+  formatThreadSchedule,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
+
+describe("resolveThreadSchedule", () => {
+  const task = (id: string, nextRunAt: string | null, enabled = true) => ({
+    id,
+    threadId: "a",
+    enabled,
+    nextRunAt,
+    lastRunStatus: "succeeded" as const,
+  });
+  it("selects the earliest enabled binding, ignoring unbound, paused and other threads", () => {
+    const early = task("early", "2026-10-27T10:00:00Z");
+    expect(
+      resolveThreadSchedule(thread("a", false), [
+        task("late", "2026-10-27T12:00:00Z"),
+        task("paused", "2026-10-27T08:00:00Z", false),
+        { ...task("unbound", "2026-10-27T07:00:00Z"), threadId: null },
+        { ...task("other", "2026-10-27T06:00:00Z"), threadId: "b" },
+        task("unknown", null),
+        early,
+      ]),
+    ).toBe(early);
+  });
+  it("keeps execution, approval, input, plan review and failures actionable", () => {
+    const tasks = [task("one", null)];
+    expect(resolveThreadSchedule(thread("a", true), tasks)).toBeNull();
+    for (const patch of [
+      { hasPendingApprovals: true },
+      { hasPendingUserInput: true },
+      { hasActionableProposedPlan: true, interactionMode: "plan" as const },
+      { pendingGuestMessageCount: 1 },
+    ])
+      expect(resolveThreadSchedule({ ...thread("a", false), ...patch }, tasks)).toBeNull();
+    expect(
+      resolveThreadSchedule(thread("a", false), [{ ...tasks[0]!, lastRunStatus: "failed" }]),
+    ).toBeNull();
+    expect(resolveThreadSchedule(thread("a", false), [])).toBeNull();
+    expect(resolveThreadSchedule(thread("a", false), [task("paused", null, false)])).toBeNull();
+  });
+  it("retains enabled schedules with unknown due times without inventing a due date", () => {
+    const unknown = task("unknown", null);
+    expect(resolveThreadSchedule(thread("a", false), [unknown])).toBe(unknown);
+    expect(resolveThreadSchedule(thread("a", false), [unknown], true)).toBeNull();
+  });
+});
+
+describe("formatThreadSchedule", () => {
+  const fixed = {
+    schedule: { type: "fixed_time" as const, timeOfDay: "10:00" },
+    nextRunAt: "2026-10-27T10:00:00Z",
+  };
+  it("formats the server instant in its environment zone and the user's clock format", () => {
+    expect(formatThreadSchedule(fixed, 0, "24-hour", "UTC")).toMatch(/10:00.*UTC/);
+    expect(formatThreadSchedule(fixed, 0, "12-hour", "UTC")).toMatch(/10:00.*AM.*UTC/);
+    expect(formatThreadSchedule(fixed, 0, "24-hour", "Europe/Oslo")).toMatch(/11:00/);
+    const summer = { ...fixed, nextRunAt: "2026-07-01T10:00:00Z" };
+    expect(formatThreadSchedule(summer, 0, "24-hour", "Europe/Oslo")).toMatch(/12:00/);
+    expect(formatThreadSchedule(fixed, 0, "24-hour")).toBe("Timezone unknown");
+    expect(formatThreadSchedule(fixed, 0, "24-hour", "invalid")).toBe("Timezone unknown");
+  });
+  it("uses elapsed time for intervals and never invents a missing or expired due time", () => {
+    const interval = { ...fixed, schedule: { type: "interval" as const, everyMs: 7_200_000 } };
+    expect(formatThreadSchedule(interval, Date.parse("2026-10-27T08:00:00Z"), "locale")).toBe(
+      "in 2h",
+    );
+    expect(formatThreadSchedule(interval, Date.parse("2026-10-27T09:59:00Z"), "locale")).toBe(
+      "in 1m",
+    );
+    expect(formatThreadSchedule(interval, Date.parse(fixed.nextRunAt), "locale")).toBe("Due");
+    expect(formatThreadSchedule({ ...interval, nextRunAt: null }, 0, "locale")).toBe(
+      "Next run unknown",
+    );
+  });
+  it("disambiguates Oslo DST boundaries using the supplied environment zone", () => {
+    const label = (instant: string) =>
+      formatThreadSchedule({ ...fixed, nextRunAt: instant }, 0, "24-hour", "Europe/Oslo");
+    expect(label("2026-03-29T00:30:00Z")).toMatch(/01:30/);
+    expect(label("2026-03-29T01:30:00Z")).toMatch(/03:30/);
+    const first = label("2026-10-25T00:30:00Z");
+    const second = label("2026-10-25T01:30:00Z");
+    expect(first).toMatch(/02:30/);
+    expect(second).toMatch(/02:30/);
+    expect(first).not.toBe(second);
+    expect(formatThreadSchedule(fixed, 0, "locale", "Etc/Unknown")).toBe("Timezone unknown");
+  });
+});
 
 function thread(id: string, working: boolean) {
   return {
@@ -77,6 +164,29 @@ describe("createInboxReturnTracker", () => {
     expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
     expect(notify).toHaveBeenCalledTimes(1);
     unsubscribe();
+  });
+
+  it("returns an automation to Scheduled after execution grace without another idle ping", () => {
+    const tracker = createInboxReturnTracker();
+    const idle = thread("automation", false);
+    const task = {
+      id: "task",
+      threadId: idle.id,
+      enabled: true,
+      nextRunAt: null,
+      lastRunStatus: "succeeded",
+    };
+    tracker.observe([thread("automation", true)]);
+    const finishing = tracker.observe([idle]);
+    expect(resolveThreadSchedule(idle, [task], finishing.isWorking(idle))).toBeNull();
+    vi.advanceTimersByTime(2_000);
+    expect(resolveThreadSchedule(idle, [task], tracker.isWorking(idle))).toBe(task);
+    const returnedAt = tracker.returnedAt(idle);
+    tracker.observe([idle]);
+    vi.advanceTimersByTime(60_000);
+    tracker.observe([idle]);
+    expect(tracker.returnedAt(idle)).toBe(returnedAt);
+    expect(resolveThreadSchedule(idle, [task], tracker.isWorking(idle))).toBe(task);
   });
 
   it("cancels a transient return on resume and grants a fresh grace after the next finish", () => {

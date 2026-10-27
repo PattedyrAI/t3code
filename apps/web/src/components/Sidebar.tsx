@@ -1,4 +1,4 @@
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import { type EnvironmentId, type ScopedProjectRef, type ScheduledTask } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
@@ -10,7 +10,8 @@ import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { serverEnvironment } from "../state/server";
 import * as Schema from "effect/Schema";
 import {
   DndContext,
@@ -31,6 +32,8 @@ import {
 import {
   createInboxReturnTracker,
   isThreadWorking,
+  resolveThreadSchedule,
+  formatThreadSchedule,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
@@ -288,11 +291,36 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
+const sidebarSchedulesAtom = Atom.make((get) => {
+  const tasksByThread = new Map<string, ScheduledTask[]>();
+  const timeZones = new Map<EnvironmentId, string>();
+  for (const [environmentId] of get(environmentPresentations.serverConfigsAtom)) {
+    if (
+      get(environmentPresentations.presentationAtom(environmentId))?.connection.phase !==
+      "connected"
+    )
+      continue;
+    const result = get(serverEnvironment.scheduledTasksLive({ environmentId, input: {} }));
+    if (!AsyncResult.isSuccess(result)) continue;
+    if (result.value.environmentTimeZone !== undefined)
+      timeZones.set(environmentId, result.value.environmentTimeZone);
+    for (const task of result.value.tasks) {
+      if (task.threadId === null) continue;
+      const key = scopedThreadKey(scopeThreadRef(environmentId, task.threadId));
+      const tasks = tasksByThread.get(key) ?? [];
+      tasks.push(task);
+      tasksByThread.set(key, tasks);
+    }
+  }
+  return { tasksByThread, timeZones };
+}).pipe(Atom.withLabel("sidebar-schedules"));
+
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const SCHEDULED_SHELF_EXPANDED_KEY = "t3code:sidebar:scheduled-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -308,6 +336,7 @@ type SidebarOptimisticDrop = {
 };
 
 interface SidebarThreadPartitionInput {
+  readonly schedules: ReadonlyMap<string, readonly ScheduledTask[]>;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
@@ -382,6 +411,12 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
   } = input;
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const { tasksByThread: schedules, timeZones } = useAtomValue(sidebarSchedulesAtom);
+  const [scheduledShelfExpanded, setScheduledShelfExpanded] = useLocalStorage(
+    SCHEDULED_SHELF_EXPANDED_KEY,
+    false,
+    Schema.Boolean,
+  );
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -415,6 +450,7 @@ function useSidebarThreads(input: {
     settledTail.scopeKey === projectScopeKey ? settledTail.count : SETTLED_TAIL_INITIAL_COUNT;
 
   const partition = partitionSidebarThreads({
+    schedules,
     threads,
     scopedProjectKeys,
     serverConfigs,
@@ -423,8 +459,14 @@ function useSidebarThreads(input: {
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
 
-  const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
-    partition;
+  const {
+    pinnedThreads,
+    activeThreads,
+    workingThreads,
+    scheduledThreads,
+    snoozedThreads,
+    settledThreads,
+  } = partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
     scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
@@ -457,10 +499,14 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeRowThreadKey);
+  const visibleScheduledThreads = scheduledShelfExpanded
+    ? scheduledThreads
+    : routeThreadOnly(scheduledThreads, routeRowThreadKey);
   const orderedThreads = [
     ...pinnedThreads,
     ...activeThreads,
     ...visibleWorkingThreads,
+    ...visibleScheduledThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
   ];
@@ -469,6 +515,7 @@ function useSidebarThreads(input: {
     [pinnedThreads, "pinned"],
     [activeThreads, "active"],
     [workingThreads, "working"],
+    [scheduledThreads, "scheduled"],
     [snoozedThreads, "snoozed"],
     [settledThreads, "settled"],
   ] as const) {
@@ -476,12 +523,14 @@ function useSidebarThreads(input: {
   }
   return {
     ...partition,
+    scheduleTimeZones: timeZones,
     threads,
     workingShelfEnabled,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
       ...workingThreads,
+      ...scheduledThreads,
       ...snoozedThreads,
       ...settledThreads,
     ],
@@ -499,6 +548,9 @@ function useSidebarThreads(input: {
     snoozedShelfExpanded,
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
+    scheduledShelfExpanded,
+    toggleScheduledShelf: () => setScheduledShelfExpanded((value) => !value),
+    visibleScheduledThreads,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -527,6 +579,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
+  const scheduled: EnvironmentThreadShell[] = [];
+  const scheduleByThreadKey = new Map<string, ScheduledTask>();
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
     workingShelfEnabled &&
     (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
@@ -574,7 +628,16 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           ? settled
           : section === "pinned"
             ? pinned
-            : inbox(thread)
+            : (() => {
+                const task = resolveThreadSchedule(
+                  thread,
+                  input.schedules.get(threadKey) ?? [],
+                  inboxObservation.isWorking(thread),
+                );
+                if (task === null) return inbox(thread);
+                scheduleByThreadKey.set(threadKey, task);
+                return scheduled;
+              })()
       ).push(thread);
     }
   }
@@ -603,6 +666,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
             getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
           }),
     workingThreads: sortWorkingThreadsBySend(working),
+    scheduledThreads: scheduled,
+    scheduleByThreadKey,
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
         firstValidTimestampMs(left.snoozedUntil ?? null) -
@@ -1104,6 +1169,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeReorderableThreadKeys,
     activeThreads,
     workingThreads,
+    scheduledThreads,
+    scheduleByThreadKey,
     snoozedThreads,
     settledThreads,
     snoozeNow,
@@ -1118,6 +1185,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     snoozedShelfExpanded,
     toggleSnoozedShelf,
     workingShelfExpanded,
+    scheduledShelfExpanded,
+    toggleScheduledShelf,
+    visibleScheduledThreads,
     toggleWorkingShelf,
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -1131,6 +1201,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeKeys,
     pinnedKeysById,
     activeKeysById,
+    scheduleTimeZones,
   } = useSidebarThreads({
     projectScopeKey,
     scopedProjectKeys,
@@ -1704,6 +1775,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       pinnedThreads.length +
         activeThreads.length +
         workingThreads.length +
+        scheduledThreads.length +
         snoozedThreads.length +
         settledCount ===
       0
@@ -1720,6 +1792,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
+    }
+    if (scheduledThreads.length > 0) {
+      items.push({ kind: "marker", marker: "scheduled-header" });
+      items.push(...rowsOf(visibleScheduledThreads, "scheduled"));
     }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
@@ -2967,6 +3043,28 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               optimisticDrop !== null
                             }
                             thread={thread}
+                            scheduleLabel={
+                              section === "scheduled"
+                                ? formatThreadSchedule(
+                                    scheduleByThreadKey.get(threadKey)!,
+                                    Date.now(),
+                                    timestampFormat,
+                                    scheduleTimeZones.get(thread.environmentId),
+                                  )
+                                : null
+                            }
+                            onEditSchedule={
+                              section === "scheduled"
+                                ? () =>
+                                    void router.navigate({
+                                      to: "/settings/scheduled-tasks",
+                                      search: {
+                                        environmentId: thread.environmentId,
+                                        taskId: scheduleByThreadKey.get(threadKey)!.id,
+                                      },
+                                    })
+                                : undefined
+                            }
                             variant={rowVariant}
                             variantAction={
                               section === "snoozed"
@@ -3137,13 +3235,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
-                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                className={cn(
+                                  workingThreads.length + scheduledThreads.length === 0 &&
+                                    "mt-auto",
+                                )}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
-                                hostsUndoNotice={workingThreads.length === 0}
+                                hostsUndoNotice={
+                                  workingThreads.length + scheduledThreads.length === 0
+                                }
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
                                   onToggle: toggleSnoozedShelf,
+                                }}
+                              />,
+                            );
+                            break;
+                          case "scheduled-header":
+                            items.push(
+                              <SidebarSectionHeader
+                                key="scheduled-shelf-header"
+                                marker="scheduled-header"
+                                className={cn(workingThreads.length === 0 && "mt-auto")}
+                                label="Scheduled"
+                                count={scheduledThreads.length}
+                                hostsUndoNotice={workingThreads.length === 0}
+                                toggle={{
+                                  expanded: scheduledShelfExpanded,
+                                  onToggle: toggleScheduledShelf,
                                 }}
                               />,
                             );
@@ -3154,12 +3273,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  workingThreads.length +
+                                    scheduledThreads.length +
+                                    snoozedThreads.length ===
+                                    0 && "mt-auto",
                                 )}
                                 label="Settled"
                                 count={settledCount}
                                 hostsUndoNotice={
-                                  workingThreads.length + snoozedThreads.length === 0
+                                  workingThreads.length +
+                                    scheduledThreads.length +
+                                    snoozedThreads.length ===
+                                  0
                                 }
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
@@ -3223,6 +3348,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
+            scheduledThreads.length +
             snoozedThreads.length +
             settledCount ===
             0 ? (

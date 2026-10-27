@@ -1381,6 +1381,9 @@ export const layerWsRpc = (
         currentSession.scopes.includes(AuthOrchestrationOperateScope)
           ? result
           : {
+              ...(result.environmentTimeZone === undefined
+                ? {}
+                : { environmentTimeZone: result.environmentTimeZone }),
               tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
             };
       const authorizeEffect = <A, E, R>(

@@ -65,6 +65,7 @@ import {
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
+  ThreadListV2ScheduledShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -265,9 +266,11 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    scheduledShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
+    toggleScheduledShelf,
   } = useThreadListV2ShelfPreferences();
   // Keep time in state; the compiler would cache a render-time new Date().
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -316,6 +319,7 @@ function ThreadNavigationSidebarPane(
     shelfPreferencesLoaded,
     workingShelfEnabled,
     workingShelfExpanded,
+    scheduledShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
@@ -561,6 +565,7 @@ function ThreadNavigationSidebarPane(
             variant={item.item.variant}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
+            scheduled={item.item.scheduleLabel !== undefined}
             pinned={item.item.pinned}
             wokeAt={item.item.wokeAt}
             snoozePresetMinute={item.snoozePresetMinute ?? ""}
@@ -627,6 +632,16 @@ function ThreadNavigationSidebarPane(
           />
         );
       }
+      case "v2-scheduled-shelf":
+        return (
+          <ThreadListV2ScheduledShelfHeader
+            count={item.count}
+            disabled={item.disabled}
+            expanded={item.expanded}
+            onToggle={toggleScheduledShelf}
+            pane="sidebar"
+          />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader

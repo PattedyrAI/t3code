@@ -9,6 +9,8 @@ import {
   getThreadListV2RowAppearance,
 } from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/ui/RowPressable";
+import { useNavigation } from "@react-navigation/native";
+import { openSettings } from "../settings/settings-navigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
@@ -252,7 +254,12 @@ type ThreadListV2ShelfHeaderProps = {
   readonly pane?: "screen" | "sidebar";
 };
 
-const SHELF_LABEL = { working: "Working", snoozed: "Snoozed", settled: "Settled" } as const;
+const SHELF_LABEL = {
+  working: "Working",
+  scheduled: "Scheduled",
+  snoozed: "Snoozed",
+  settled: "Settled",
+} as const;
 
 function ThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_LABEL },
@@ -278,6 +285,12 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
+});
+
+export const ThreadListV2ScheduledShelfHeader = memo(function ThreadListV2ScheduledShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="scheduled" />;
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
@@ -575,6 +588,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
+  readonly scheduled?: boolean;
   readonly pinned?: boolean;
   readonly wokeAt: string | null;
   readonly snoozeWakeLabelText?: string;
@@ -626,6 +640,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
+  const navigation = useNavigation();
   const titleTypography = useScaledTextRole("body");
   const metadataTypography = useScaledTextRole("label");
   const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
@@ -873,6 +888,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const slimMenuActions = useMemo<MenuAction[]>(
     () => [
+      ...(props.scheduled
+        ? [{ id: "automations", title: "Manage automations", image: "clock" }]
+        : []),
       SLIM_MENU_ACTIONS[0]!,
       ...arrangementMenuItems.filter(
         (action) => action.id !== "move-up" && action.id !== "move-down",
@@ -882,7 +900,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       LEGACY_MENU_ACTIONS[0]!,
       SLIM_MENU_ACTIONS[1]!,
     ],
-    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems],
+    [arrangementMenuItems, autoSettleMenuItems, titleMenuItems, props.scheduled],
   );
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -906,6 +924,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
+      if (nativeEvent.event === "automations") openSettings(navigation, "SettingsScheduledTasks");
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
@@ -943,6 +962,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       onNewThreadOnBranch,
+      navigation,
       thread,
       handleArchive,
       handleDelete,
@@ -1316,7 +1336,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             sidebarPane ? "px-3" : "px-5",
           )}
         >
-          {props.project ? (
+          {props.scheduled ? (
+            <SymbolView
+              name="clock"
+              size={projectIconSize}
+              tintColorClassName="accent-foreground-muted"
+            />
+          ) : props.project ? (
             <View className="opacity-40">
               <ProjectFavicon
                 environmentId={thread.environmentId}

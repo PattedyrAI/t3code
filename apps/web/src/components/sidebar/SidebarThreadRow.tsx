@@ -37,6 +37,7 @@ import {
   CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
+  CalendarClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
   PinIcon,
@@ -511,6 +512,8 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 type SidebarThreadRowProps = {
+  scheduleLabel?: string | null;
+  onEditSchedule?: (() => void) | undefined;
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   variantAction: SidebarSweepAction;
@@ -964,7 +967,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,
-    statusLabel: topStatus?.label ?? null,
+    statusLabel: props.scheduleLabel ?? topStatus?.label ?? null,
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1127,7 +1130,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.scheduleLabel ? (
+                <CalendarClockIcon aria-hidden className="size-4" />
+              ) : props.project ? (
+                <ProjectFavicon project={props.project} className="size-4" />
+              ) : null}
             </span>
             {draftIndicator}
             {title}
@@ -1176,6 +1183,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       />
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
                     </Tooltip>
+                  ) : props.scheduleLabel ? (
+                    <span className="text-xs">{props.scheduleLabel}</span>
                   ) : (
                     <span className="text-xs">
                       <RelativeTimeLabel
@@ -1188,7 +1197,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     </span>
                   )}
                 </span>
-                {variantAction === "unsnooze" ? (
+                {props.onEditSchedule ? (
+                  <button
+                    type="button"
+                    aria-label="Edit automation"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onEditSchedule?.();
+                    }}
+                    onPointerDown={handleActionPointerDown}
+                    className="pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center rounded-md px-2 text-muted-foreground opacity-0 hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:opacity-100"
+                  >
+                    <CalendarClockIcon className="size-3.5" />
+                  </button>
+                ) : variantAction === "unsnooze" ? (
                   !props.snoozeSupported ? null : (
                     <button
                       type="button"
