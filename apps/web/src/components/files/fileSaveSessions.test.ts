@@ -121,7 +121,7 @@ describe("file save sessions", () => {
     expect(h.writes()).toEqual([[target, "draft"]]);
   });
 
-  it("queues a recovered draft that a retired session will overwrite with a newer one", async () => {
+  it("writes a rejoining surface's edit last, over the released session's queued draft", async () => {
     using h = setup();
     let finishWrite = () => {};
     h.persist.mockImplementationOnce(
@@ -135,11 +135,36 @@ describe("file save sessions", () => {
     await vi.advanceTimersByTimeAsync(500);
     h.sessions.change(target, "Y");
     release();
-    h.state.unsaved = "X";
     h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "Z");
+    await vi.advanceTimersByTimeAsync(500);
     finishWrite();
     await vi.runAllTimersAsync();
-    expect(h.writes().at(-1)).toEqual([target, "X"]);
+    expect(h.writes().at(-1)).toEqual([target, "Z"]);
+  });
+
+  it("tells a surface joining a session with an unsaved edit that the file is pending", () => {
+    using h = setup();
+    h.sessions.acquire(target, h.onPendingChange);
+    h.sessions.change(target, "edit");
+    const joiningListener = vi.fn();
+    h.sessions.acquire(target, joiningListener);
+    expect(joiningListener).toHaveBeenCalledWith("file.txt", true);
+  });
+
+  it("lets go of a released session that cannot write and recovers its draft later", async () => {
+    using h = setup();
+    const release = h.sessions.acquire(target, h.onPendingChange);
+    h.state.writable = false;
+    h.sessions.change(target, "draft");
+    h.state.unsaved = "draft";
+    release();
+    expect(h.state.onWritable).toEqual([]);
+    h.sessions.change(target, "retired editor contents");
+    h.state.writable = true;
+    h.sessions.acquire(target, h.onPendingChange);
+    await vi.runAllTimersAsync();
+    expect(h.writes()).toEqual([[target, "draft"]]);
   });
 
   it("recovers a draft that a retired session gave up on when write access dropped", async () => {

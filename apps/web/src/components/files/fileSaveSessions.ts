@@ -39,35 +39,28 @@ interface FileSaveSession {
   readonly listeners: Map<FilePendingListener, number>;
   readonly unsubscribeWritable: () => void;
   leases: number;
+  /** The last release flushed, and the session stays open until that settles. */
+  flushingOnRelease: boolean;
 }
 
 /**
- * One save session per file, shared by every surface editing it. The last
- * surface to leave flushes and disposes the session. The next surface for
- * that file starts a fresh one, which resumes any draft left unsaved, as does
- * a live session whose environment regains write access.
+ * One save session, so one ordered write queue, per file. A released session
+ * stays open until its flush settles, so a surface rejoining meanwhile reuses
+ * it instead of racing the flush. A session that cannot write closes at once,
+ * and the next one, or regained write access, resumes the unsaved draft.
  */
 export function createFileSaveSessions(deps: FileSaveSessionDeps) {
   const sessions = new Map<string, FileSaveSession>();
-  // A disposed session that was left with an unwritten draft. A replacement
-  // skips a recovered draft only while that session is writing it and it is
-  // the session's last draft; a disposed session that is not writing never
-  // writes again, and any other draft would be overwritten by its last one.
-  const retiring = new Map<string, FileSaveCoordinator>();
 
-  const recover = (key: string, target: FileSaveTarget, coordinator: FileSaveCoordinator) => {
+  const recover = (target: FileSaveTarget, coordinator: FileSaveCoordinator) => {
     if (!deps.canPersist(target)) return;
     const unsaved = deps.readUnsaved(target);
-    if (unsaved === null) return;
-    const retired = retiring.get(key);
-    if (retired && !retired.writing) retiring.delete(key);
-    else if (retired?.unconfirmedContents === unsaved) return;
-    coordinator.change(unsaved);
+    if (unsaved !== null) coordinator.change(unsaved);
   };
 
   const create = (key: string, target: FileSaveTarget): FileSaveSession => {
     const listeners = new Map<FilePendingListener, number>();
-    const coordinator = new FileSaveCoordinator({
+    const coordinator: FileSaveCoordinator = new FileSaveCoordinator({
       debounceMs: deps.debounceMs,
       canPersist: () => deps.canPersist(target),
       // The last surface's listeners outlive it: a flush that settles after
@@ -75,29 +68,29 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
       onPendingChange: (pending) => {
         for (const listener of listeners.keys()) listener(target.relativePath, pending);
       },
-      persist: async (contents) => {
-        let succeeded = false;
-        try {
-          const result = await deps.persist(target, contents);
-          succeeded = result._tag === "Success";
-          return result;
-        } finally {
-          // This was the retired session's last draft. A replacement skipped
-          // it, and a disposed session never retries, so the live one picks
-          // it up.
-          if (retiring.get(key) === coordinator && coordinator.unconfirmedContents === contents) {
-            retiring.delete(key);
-            const live = sessions.get(key);
-            if (!succeeded && live) recover(key, target, live.coordinator);
-          }
+      persist: (contents) => deps.persist(target, contents),
+      onConfirmed: (contents) => deps.confirm(target, contents),
+      onSettled: () => {
+        if (!session.flushingOnRelease) return;
+        session.flushingOnRelease = false;
+        if (session.leases === 0) {
+          if (sessions.get(key) === session) sessions.delete(key);
+          session.unsubscribeWritable();
+        } else if (coordinator.unconfirmedContents !== null) {
+          // A surface rejoined while the release flush failed; retry it once.
+          recover(target, coordinator);
         }
       },
-      onConfirmed: (contents) => deps.confirm(target, contents),
     });
-    const unsubscribeWritable = deps.subscribeWritable(target, () =>
-      recover(key, target, coordinator),
-    );
-    return { coordinator, listeners, unsubscribeWritable, leases: 0 };
+    const unsubscribeWritable = deps.subscribeWritable(target, () => recover(target, coordinator));
+    const session: FileSaveSession = {
+      coordinator,
+      listeners,
+      unsubscribeWritable,
+      leases: 0,
+      flushingOnRelease: false,
+    };
+    return session;
   };
 
   const acquire = (target: FileSaveTarget, onPendingChange: FilePendingListener): (() => void) => {
@@ -107,7 +100,10 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
     sessions.set(key, session);
     session.leases += 1;
     session.listeners.set(onPendingChange, (session.listeners.get(onPendingChange) ?? 0) + 1);
-    if (!existing) recover(key, target, session.coordinator);
+    if (!existing) recover(target, session.coordinator);
+    else if (session.coordinator.unconfirmedContents !== null) {
+      onPendingChange(target.relativePath, true);
+    }
 
     let released = false;
     return () => {
@@ -120,10 +116,8 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
         else session.listeners.delete(onPendingChange);
         return;
       }
-      sessions.delete(key);
-      session.unsubscribeWritable();
-      if (session.coordinator.unconfirmedContents !== null) retiring.set(key, session.coordinator);
-      session.coordinator.dispose();
+      session.flushingOnRelease = true;
+      session.coordinator.flush();
     };
   };
 
@@ -132,7 +126,8 @@ export function createFileSaveSessions(deps: FileSaveSessionDeps) {
     acquire,
     /** Edits for a file nobody holds open are dropped, so retired editors stay inert. */
     change(target: FileSaveTarget, contents: string): void {
-      sessions.get(fileSaveKey(target))?.coordinator.change(contents);
+      const session = sessions.get(fileSaveKey(target));
+      if (session && session.leases > 0) session.coordinator.change(contents);
     },
   };
 }
