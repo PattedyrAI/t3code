@@ -9,12 +9,7 @@ import type {
 import { EnvironmentId, ThreadId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
-import {
-  NavigationContext,
-  NavigationRouteContext,
-  useNavigation,
-  useNavigationState,
-} from "@react-navigation/native";
+import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import { use, useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Keyboard, Platform, useWindowDimensions, View } from "react-native";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
@@ -41,6 +36,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
+import { useThreadCwd } from "../../state/use-selected-thread-worktree";
 import { environmentThreadShells } from "../../state/threads";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -132,6 +128,8 @@ export function AdaptiveWorkspaceLayout(props: {
   readonly children: ReactNode;
   readonly pathname: string;
   readonly workspaceRouteKey: string | undefined;
+  readonly workspaceRouteName: string | undefined;
+  readonly workspaceRouteKeys: ReadonlyArray<string>;
   readonly selectedPullRequestKey?: string | null;
 }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -158,6 +156,8 @@ function AdaptiveWorkspaceLayoutContent(
     readonly children: ReactNode;
     readonly pathname: string;
     readonly workspaceRouteKey: string | undefined;
+    readonly workspaceRouteName: string | undefined;
+    readonly workspaceRouteKeys: ReadonlyArray<string>;
     readonly selectedPullRequestKey?: string | null;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
@@ -312,31 +312,49 @@ function AdaptiveWorkspaceLayoutContent(
   const activeThread = parseActiveThreadPath(pathname);
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
-  const selectedThreadKey = (() => {
+  const selectedThreadRef = (() => {
     if (environmentId === null || threadId === null) {
       return null;
     }
     try {
-      return scopedThreadKey(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+      return {
+        environmentId: EnvironmentId.make(environmentId),
+        threadId: ThreadId.make(threadId),
+      };
     } catch {
       return null;
     }
   })();
-  const workspaceRouteName = useNavigationState(
-    (state) => state?.routes.find((route) => route.key === props.workspaceRouteKey)?.name,
+  const selectedThreadKey =
+    selectedThreadRef === null
+      ? null
+      : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
+  const isFilesRoute = props.workspaceRouteName === "ThreadFiles";
+  // Same resolution the Files screen uses: without a cwd it shows "Files unavailable" and
+  // registers no inspector, so revealing would only hide the sidebar beside that screen.
+  const filesCwd = useThreadCwd(isFilesRoute && fileInspector.supported ? selectedThreadRef : null);
+  // Opening a review or the files route reveals its inspector once per route and thread.
+  // Routes still on the stack remember their reveal, so going back to one keeps the user's choice.
+  const revealsInspector =
+    props.workspaceRouteName === "ThreadReview" || (isFilesRoute && filesCwd !== null);
+  const [revealedInspectors, setRevealedInspectors] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
   );
-  // Opening a review or the files route reveals its inspector once per route
-  // and thread. Coming back to that route from a screen pushed over it keeps
-  // the user's choice, so the last revealed key is not cleared on other routes.
-  const inspectorRevealKey =
-    (workspaceRouteName === "ThreadReview" ||
-      (workspaceRouteName === "ThreadFiles" && fileInspector.supported)) &&
-    selectedThreadKey !== null
-      ? `${props.workspaceRouteKey}:${selectedThreadKey}`
-      : null;
-  const [revealedInspectorKey, setRevealedInspectorKey] = useState<string | null>(null);
-  if (inspectorRevealKey !== null && inspectorRevealKey !== revealedInspectorKey) {
-    setRevealedInspectorKey(inspectorRevealKey);
+  if (
+    revealsInspector &&
+    props.workspaceRouteKey !== undefined &&
+    selectedThreadKey !== null &&
+    revealedInspectors.get(props.workspaceRouteKey) !== selectedThreadKey
+  ) {
+    const next = new Map<string, string>();
+    for (const routeKey of props.workspaceRouteKeys) {
+      const revealedThreadKey = revealedInspectors.get(routeKey);
+      if (revealedThreadKey !== undefined) {
+        next.set(routeKey, revealedThreadKey);
+      }
+    }
+    next.set(props.workspaceRouteKey, selectedThreadKey);
+    setRevealedInspectors(next);
     setFocusedAuxiliaryPaneRole("inspector");
     setFileInspectorPreferredVisible(true);
   }
