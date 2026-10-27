@@ -76,6 +76,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const insets = useSafeAreaInsets();
   const theme = useUniwindTheme();
   const workflow = useThreadQueueWorkflow(target);
+  const sendsNow = workflow?.canSendNow === true || workflow?.promoteSkipsCompaction === true;
   const threadKey = scopedThreadKey(target.environmentId, target.threadId);
   const editing = useQueuedRunEdit(threadKey);
   const pendingRequests = useAtomValue(environmentThreadDetails.pendingRequestsAtom(target));
@@ -350,7 +351,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                         ? [
                             {
                               id: "steer",
-                              title: workflow?.canSendNow ? "Send now" : "Steer now",
+                              title: sendsNow ? "Send now" : "Steer now",
                               attributes: { disabled: !controls.canSend },
                               image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
                             },
@@ -421,7 +422,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={
-                        workflow?.canSendNow
+                        sendsNow
                           ? `Send message ${index + 1} now`
                           : `Steer with message ${index + 1} now`
                       }
@@ -431,12 +432,12 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     >
                       <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
                         <SymbolView
-                          name={workflow?.canSendNow ? "arrow.up" : "arrow.turn.left.up"}
+                          name={sendsNow ? "arrow.up" : "arrow.turn.left.up"}
                           size={13}
                           tintColorClassName="accent-primary-foreground"
                         />
                         <Text className="font-t3-medium text-sm text-primary-foreground">
-                          {workflow?.canSendNow ? "Send now" : "Steer"}
+                          {sendsNow ? "Send now" : "Steer"}
                         </Text>
                       </View>
                     </Pressable>

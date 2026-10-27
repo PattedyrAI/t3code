@@ -111,6 +111,11 @@ export function QueuedRunsControl({
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
   const canSend = workflow?.canSendNow === true || workflow?.canPromoteToSteer === true;
+  const sendLabel = workflow?.canSendNow
+    ? { button: "Send now", tooltip: "Start a turn with this message" }
+    : workflow?.promoteSkipsCompaction
+      ? { button: "Send now", tooltip: "Skip compaction and send this message" }
+      : { button: "Steer", tooltip: "Send as a steer instead" };
   const queuedImageUrlById = new Map(
     queuedImageAttachmentUrls.flatMap((url, index) => {
       const resource = queuedImageAttachmentResources[index];
@@ -467,11 +472,11 @@ export function QueuedRunsControl({
                           }}
                         >
                           <CornerUpRightIcon />
-                          {workflow?.canSendNow ? "Send now" : "Steer"}
+                          {sendLabel.button}
                         </Button>
                       </TooltipTrigger>
                       <TooltipPopup>
-                        {`${workflow?.canSendNow ? "Start a turn with this message" : "Send as a steer instead"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                        {`${sendLabel.tooltip}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
                     <Tooltip>
