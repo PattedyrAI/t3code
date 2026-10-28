@@ -3265,6 +3265,39 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("sends a selected option and its additional text as one dialog response", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-select-details",
+        method: "select",
+        title: "Pick a format",
+        options: ["CSV", "JSON"],
+      });
+      const event = yield* takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+        return assert.fail("expected a user input request");
+      }
+      yield* runtime.respondToRuntimeRequest({
+        requestId: event.turnItem.requestId,
+        answers: { "ui-select-details": ["CSV", "Also include examples"] },
+      });
+      const response = yield* fake.takeRequest("extension_ui_response");
+      assert.equal(response["value"], "CSV\n\nAlso include examples");
+      assert.isUndefined(response["cancelled"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("asks an input dialog's title when its placeholder is blank", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

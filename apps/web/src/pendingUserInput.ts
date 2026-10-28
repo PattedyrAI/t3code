@@ -7,13 +7,20 @@ import { collectInlineContextIds } from "./lib/composerContextReferences";
 export function projectPendingUserInputAnswer(
   answer: unknown,
   threadContexts: ReadonlyArray<ThreadContextRecord>,
+  customAnswer?: string,
 ) {
-  if (typeof answer !== "string" || threadContexts.length === 0) return answer;
+  if (threadContexts.length === 0) return answer;
   const recordsById = new Map(threadContexts.map((record) => [record.contextId, record]));
-  return replaceComposerContextReferences(answer, (reference) => {
-    const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
-    return record ? formatThreadLink(record, reference.label) : reference.source;
-  });
+  const projectText = (text: string) =>
+    replaceComposerContextReferences(text, (reference) => {
+      const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
+      return record ? formatThreadLink(record, reference.label) : reference.source;
+    });
+  if (typeof answer === "string") return projectText(answer);
+  if (Array.isArray(answer) && customAnswer?.trim() && answer.at(-1) === customAnswer.trim()) {
+    return [...answer.slice(0, -1), projectText(customAnswer.trim())];
+  }
+  return answer;
 }
 
 // Question drafts retain deleted chip records for undo; only transfer referenced records.
@@ -75,13 +82,17 @@ export function resolvePendingUserInputAnswer(
       : question.initialAnswer !== undefined
         ? (draft?.customAnswer ?? null)
         : normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer !== null && customAnswer.length > 0) {
-    return customAnswer;
-  }
-
   const selectedOptionValues = normalizeSelectedOptionValues(draft?.selectedOptionValues).filter(
     (value) => question.options.some((option) => (option.value ?? option.label) === value),
   );
+  if (customAnswer !== null && customAnswer.length > 0) {
+    if (question.initialAnswer !== undefined || selectedOptionValues.length === 0)
+      return customAnswer;
+    return [
+      ...(question.multiSelect ? selectedOptionValues : selectedOptionValues.slice(0, 1)),
+      customAnswer,
+    ];
+  }
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
       ? selectedOptionValues
@@ -99,10 +110,10 @@ export function resolvePendingUserInputAnswer(
 export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
-  question?: Pick<UserInputQuestion, "initialAnswer">,
+  question?: UserInputQuestion,
 ): PendingUserInputDraftAnswer {
   const selectedOptionValues =
-    question?.initialAnswer !== undefined || customAnswer.trim().length > 0
+    question?.initialAnswer !== undefined
       ? undefined
       : normalizeSelectedOptionValues(draft?.selectedOptionValues);
 
@@ -133,6 +144,10 @@ export function togglePendingUserInputOptionSelection(
   draft: PendingUserInputDraftAnswer | undefined,
   optionValue: string,
 ): PendingUserInputDraftAnswer {
+  const customAnswer =
+    question.initialAnswer === undefined && question.allowCustomAnswer !== false
+      ? (draft?.customAnswer ?? "")
+      : "";
   if (question.multiSelect) {
     const selectedOptionValues = normalizeSelectedOptionValues(draft?.selectedOptionValues);
     const nextSelectedOptionValues = selectedOptionValues.includes(optionValue)
@@ -140,7 +155,7 @@ export function togglePendingUserInputOptionSelection(
       : [...selectedOptionValues, optionValue];
 
     return {
-      customAnswer: "",
+      customAnswer,
       ...(nextSelectedOptionValues.length > 0
         ? { selectedOptionValues: nextSelectedOptionValues }
         : {}),
@@ -148,8 +163,13 @@ export function togglePendingUserInputOptionSelection(
   }
 
   return {
-    customAnswer: "",
-    selectedOptionValues: [optionValue],
+    customAnswer,
+    selectedOptionValues:
+      question.initialAnswer === undefined &&
+      question.allowCustomAnswer !== false &&
+      draft?.selectedOptionValues?.includes(optionValue)
+        ? []
+        : [optionValue],
   };
 }
 

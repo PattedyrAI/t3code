@@ -454,11 +454,15 @@ function resolvePendingUserInputAnswer(
       : question.initialAnswer !== undefined
         ? (draft?.customAnswer ?? null)
         : normalizeDraftAnswer(draft?.customAnswer);
-  if (customAnswer !== null && customAnswer.length > 0) {
-    return customAnswer;
-  }
-
   const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
+  if (customAnswer !== null && customAnswer.length > 0) {
+    if (question.initialAnswer !== undefined || selectedOptionValues.length === 0)
+      return customAnswer;
+    return [
+      ...(question.multiSelect ? selectedOptionValues : selectedOptionValues.slice(0, 1)),
+      customAnswer,
+    ];
+  }
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
       ? selectedOptionValues
@@ -1953,7 +1957,7 @@ export function setPendingUserInputCustomAnswer(
   }
 
   const selectedOptionValues =
-    question.initialAnswer !== undefined || customAnswer.trim().length > 0
+    question.initialAnswer !== undefined
       ? undefined
       : normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   return {
@@ -1967,7 +1971,11 @@ export function isPendingUserInputOptionSelected(
   draft: PendingUserInputDraftAnswer | undefined,
   optionValue: string,
 ): boolean {
-  if (question.allowCustomAnswer !== false && normalizeDraftAnswer(draft?.customAnswer)) {
+  if (
+    question.initialAnswer !== undefined &&
+    question.allowCustomAnswer !== false &&
+    normalizeDraftAnswer(draft?.customAnswer)
+  ) {
     return false;
   }
 
@@ -1989,6 +1997,10 @@ export function togglePendingUserInputOptionSelection(
   if (resolvedOptionValue === null) {
     return draft ?? {};
   }
+  const customAnswer =
+    question.initialAnswer === undefined && question.allowCustomAnswer !== false
+      ? (draft?.customAnswer ?? "")
+      : "";
 
   if (question.multiSelect) {
     const selectedOptionValues = normalizeSelectedOptionValues(
@@ -2000,7 +2012,7 @@ export function togglePendingUserInputOptionSelection(
       : [...selectedOptionValues, resolvedOptionValue];
 
     return {
-      customAnswer: "",
+      customAnswer,
       ...(nextSelectedOptionValues.length > 0
         ? { selectedOptionValues: nextSelectedOptionValues }
         : {}),
@@ -2008,8 +2020,13 @@ export function togglePendingUserInputOptionSelection(
   }
 
   return {
-    customAnswer: "",
-    selectedOptionValues: [resolvedOptionValue],
+    customAnswer,
+    selectedOptionValues:
+      question.initialAnswer === undefined &&
+      question.allowCustomAnswer !== false &&
+      draft?.selectedOptionValues?.includes(resolvedOptionValue)
+        ? []
+        : [resolvedOptionValue],
   };
 }
 

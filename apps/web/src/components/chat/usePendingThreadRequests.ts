@@ -316,6 +316,11 @@ export function usePendingThreadRequests(input: {
       providerAnswers[question.id] = projectPendingUserInputAnswer(
         answers[question.id],
         draft?.threadContexts ?? [],
+        question.allowCustomAnswer === false
+          ? undefined
+          : usePendingUserInputAnswers.getState()[
+              userInputDraftKey(environmentId, activeThreadId, requestId)
+            ]?.[question.id]?.customAnswer,
       );
       const attachments = draft ? [...draft.images, ...draft.files] : [];
       if (attachments.length === 0) continue;
@@ -393,9 +398,13 @@ export function usePendingThreadRequests(input: {
     if (!activePendingUserInput) {
       return;
     }
-    // The option replaces the custom answer. Anything typed there is the
-    // user's text, so it goes back to the thread draft instead of vanishing.
-    const displacedAnswer = activePendingAnswerDrafts[questionId]?.customAnswer;
+    const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
+    if (!question) return;
+    const replacesCustomAnswer =
+      question.initialAnswer !== undefined || question.allowCustomAnswer === false;
+    const displacedAnswer = replacesCustomAnswer
+      ? activePendingAnswerDrafts[questionId]?.customAnswer
+      : undefined;
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
@@ -420,14 +429,6 @@ export function usePendingThreadRequests(input: {
       }
     }
     setPendingUserInputAnswersByRequestId((existing) => {
-      const question =
-        (activePendingProgress?.activeQuestion?.id === questionId
-          ? activePendingProgress.activeQuestion
-          : undefined) ?? activePendingUserInput.questions.find((entry) => entry.id === questionId);
-      if (!question) {
-        return existing;
-      }
-
       return {
         ...existing,
         [activePendingRequestKey]: {
@@ -440,8 +441,10 @@ export function usePendingThreadRequests(input: {
         },
       };
     });
-    promptRef.current = "";
-    composerRef.current?.resetCursorState({ cursor: 0 });
+    if (replacesCustomAnswer) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    }
   };
   const onSelectActivePendingUserInputOptionStable = useStableCallback(
     onSelectActivePendingUserInputOption,

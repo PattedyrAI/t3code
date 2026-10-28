@@ -31,6 +31,17 @@ describe("projectPendingUserInputAnswer", () => {
     );
   });
 
+  it("projects only the added text in a combined answer, preserving raw selected values", () => {
+    const customAnswer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
+    const selectedValue = formatInlineContextReference(threadContextReference(record));
+    expect(
+      projectPendingUserInputAnswer([selectedValue, customAnswer], [record], customAnswer),
+    ).toEqual([
+      selectedValue,
+      "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
+    ]);
+  });
+
   // regression: #18789 answers to pending questions lost exact text and option values
   it("preserves option values and exact answer text", () => {
     const options = [" first\t", "second"];
@@ -107,14 +118,54 @@ describe("resolvePendingUserInputAnswer", () => {
     });
   });
 
-  it("prefers a custom answer over selected options", () => {
+  it("submits a selected option together with additional information", () => {
     expect(
       resolvePendingUserInputAnswer(singleSelectQuestion, {
         selectedOptionValues: ["Orchestration-first"],
         customAnswer: "Keep the existing envelope for one release",
       }),
-    ).toBe("Keep the existing envelope for one release");
+    ).toEqual(["Orchestration-first", "Keep the existing envelope for one release"]);
   });
+
+  it.each([false, true])(
+    "keeps selections and text in either interaction order (multiSelect=%s)",
+    (multiSelect) => {
+      const question = { ...nativeChoiceQuestion, allowCustomAnswer: true, multiSelect };
+      const selected = togglePendingUserInputOptionSelection(question, undefined, " first\t");
+      const withText = setPendingUserInputCustomAnswer(selected, "Also include examples", question);
+      expect(withText.selectedOptionValues).toEqual([" first\t"]);
+      expect(resolvePendingUserInputAnswer(question, withText)).toEqual([
+        " first\t",
+        "Also include examples",
+      ]);
+      const typedFirst = setPendingUserInputCustomAnswer(
+        undefined,
+        "Also include examples",
+        question,
+      );
+      const selectedAfterText = togglePendingUserInputOptionSelection(
+        question,
+        typedFirst,
+        "second",
+      );
+      expect(resolvePendingUserInputAnswer(question, selectedAfterText)).toEqual([
+        "second",
+        "Also include examples",
+      ]);
+      expect(
+        resolvePendingUserInputAnswer(
+          question,
+          setPendingUserInputCustomAnswer(withText, "", question),
+        ),
+      ).toEqual(multiSelect ? [" first\t"] : " first\t");
+      expect(
+        resolvePendingUserInputAnswer(
+          question,
+          togglePendingUserInputOptionSelection(question, withText, " first\t"),
+        ),
+      ).toBe("Also include examples");
+    },
+  );
 
   it("does not replace a required choice with a custom answer", () => {
     expect(

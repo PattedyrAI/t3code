@@ -3298,6 +3298,13 @@ function piUiResponse(
   const answer = answers?.[pending.questionId];
   // RPC distinguishes empty dialog values from cancellation (undefined).
   if (typeof answer === "string") return { value: answer };
+  if (
+    Array.isArray(answer) &&
+    answer.length > 0 &&
+    answer.every((value) => typeof value === "string")
+  ) {
+    return { value: answer.join("\n\n") };
+  }
   return { cancelled: true };
 }
 

@@ -340,10 +340,12 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     const sdkAnswers: NonNullable<AskUserQuestionInput["answers"]> =
       ClaudeAdapterV2.claudeSdkUserInputAnswers({
         "Which approach?": ["Simple", "Safe"],
+        "Which formats?": ["CSV", "JSON", "Also include YAML, without null fields"],
         "Deploy now?": "Yes",
       });
     assert.deepEqual(sdkAnswers, {
       "Which approach?": "Simple, Safe",
+      "Which formats?": "CSV, JSON, Also include YAML, without null fields",
       "Deploy now?": "Yes",
     });
     assert.isTrue(

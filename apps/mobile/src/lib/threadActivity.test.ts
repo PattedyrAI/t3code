@@ -1440,6 +1440,36 @@ describe("subagent continued by a later turn", () => {
 });
 
 describe("pending user input answers", () => {
+  it.each([false, true])(
+    "keeps selections and additional text together (multiSelect=%s)",
+    (multiSelect) => {
+      const question = { ...singleSelectQuestion, multiSelect };
+      const selected = togglePendingUserInputOptionSelection(question, undefined, "Go");
+      const withText = setPendingUserInputCustomAnswer(question, selected, "Also include examples");
+      expect(isPendingUserInputOptionSelected(question, withText, "Go")).toBe(true);
+      expect(buildPendingUserInputAnswers([question], { runtime: withText })).toEqual({
+        runtime: ["Go", "Also include examples"],
+      });
+      const typedFirst = setPendingUserInputCustomAnswer(
+        question,
+        undefined,
+        "Also include examples",
+      );
+      const selectedAfterText = togglePendingUserInputOptionSelection(question, typedFirst, "Go");
+      expect(buildPendingUserInputAnswers([question], { runtime: selectedAfterText })).toEqual({
+        runtime: ["Go", "Also include examples"],
+      });
+      const cleared = setPendingUserInputCustomAnswer(question, withText, "");
+      expect(buildPendingUserInputAnswers([question], { runtime: cleared })).toEqual({
+        runtime: multiSelect ? ["Go"] : "Go",
+      });
+      const deselected = togglePendingUserInputOptionSelection(question, withText, "Go");
+      expect(buildPendingUserInputAnswers([question], { runtime: deselected })).toEqual({
+        runtime: "Also include examples",
+      });
+    },
+  );
+
   it("preserves exact editor text, including a deliberately cleared answer", () => {
     const question = { ...singleSelectQuestion, initialAnswer: "  Proposed message\n" };
     expect(

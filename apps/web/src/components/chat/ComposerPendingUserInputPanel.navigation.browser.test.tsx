@@ -10,10 +10,10 @@ import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/sta
 import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  default: (({ text }: { text: string }) => <p>{text}</p>) as never,
-}));
+vi.mock(import("../ChatMarkdown"), async () => {
+  const { memo } = await import("react");
+  return { default: memo(({ text }: { text: string }) => <p>{text}</p>) };
+});
 
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
@@ -79,10 +79,12 @@ function PendingRequestsProbe({
   environmentId,
   projection,
   loading = false,
+  onWriteDraft,
 }: {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
+  onWriteDraft?: Parameters<typeof usePendingThreadRequests>[0]["setComposerDraftPrompt"];
 }) {
   const promptRef = useRef("");
   const composerRef = useRef(null);
@@ -92,7 +94,7 @@ function PendingRequestsProbe({
     serverProjection: loading ? null : projection,
     supportsQuestionAttachments: false,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
-    setComposerDraftPrompt: () => {},
+    setComposerDraftPrompt: onWriteDraft ?? (() => {}),
     promptRef,
     composerRef,
     setThreadError: () => {},
@@ -102,6 +104,30 @@ function PendingRequestsProbe({
   });
   return null;
 }
+
+it("keeps additional information in the question answer when an option is selected", async () => {
+  const onWriteDraft = vi.fn();
+  await using _screen = await render(
+    <PendingRequestsProbe
+      environmentId={EnvironmentId.make("selection-details-environment")}
+      projection={questionProjection(threadRef.threadId)}
+      onWriteDraft={onWriteDraft}
+    />,
+  );
+  await act(() =>
+    requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Keep my text"),
+  );
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(requests.activePendingProgress?.resolvedAnswer).toEqual(["Incremental", "Keep my text"]);
+  expect(onWriteDraft).not.toHaveBeenCalled();
+  await act(() =>
+    requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Add examples"),
+  );
+  expect(requests.activePendingProgress?.resolvedAnswer).toEqual(["Incremental", "Add examples"]);
+  await act(() => requests.onSelectActivePendingUserInputOption("question-0", "Incremental"));
+  expect(requests.activePendingProgress?.resolvedAnswer).toBe("Add examples");
+  expect(onWriteDraft).not.toHaveBeenCalled();
+});
 
 it("retains answers, selections and question position after leaving chat, including while the projection reloads", async () => {
   using _timers = fakeTimers();

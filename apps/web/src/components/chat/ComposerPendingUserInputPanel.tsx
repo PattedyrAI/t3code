@@ -97,10 +97,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
   const customAnswerActive = progress.customAnswer.trim().length > 0;
+  const supportsAdditionalText =
+    activeQuestion?.allowCustomAnswer !== false && activeQuestion?.initialAnswer === undefined;
   // Read before later hooks to preserve the question's compiler cache.
   const draftSelectedOptions = activeQuestion?.options.map(
     (option) =>
-      !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
+      (supportsAdditionalText || !customAnswerActive) &&
+      progress.selectedOptionValues.includes(option.value ?? option.label),
   );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
 
@@ -129,7 +132,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
     if (disabled || isResponding) return;
-    if (activeQuestion?.multiSelect) {
+    if (activeQuestion?.multiSelect || supportsAdditionalText) {
       onToggleOption(questionId, optionValue);
       return;
     }
