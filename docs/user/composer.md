@@ -33,10 +33,11 @@ it. Very large code blocks are shown without syntax highlighting.
 ## Answer questions
 
 When a question accepts custom text, select your answers and add any details in
-its text field. Submit sends both together. Single-choice questions also wait
-for you to submit, so you have time to add context. Clear the selections to send
-only your own answer. Questions restricted to predefined choices do not accept
-additional text.
+its text field. Submit sends both together. Single-choice questions that let you
+add details also wait for you to submit, so you have time to add context. Clear
+the selections to send only your own answer. Questions restricted to predefined
+choices do not accept additional text, and a single-choice one continues as soon
+as you pick.
 
 ## Attach files
 
