@@ -13,7 +13,7 @@ import {
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
-} from "../../pendingUserInput";
+} from "@t3tools/client-runtime/state/pending-user-input";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
 it.each([false, true])(
@@ -65,7 +65,7 @@ it.each([false, true])(
             value={draft?.customAnswer ?? ""}
             onChange={(event) =>
               setDraft((current) =>
-                setPendingUserInputCustomAnswer(current, event.target.value, question),
+                setPendingUserInputCustomAnswer(question, current, event.target.value),
               )
             }
           />
