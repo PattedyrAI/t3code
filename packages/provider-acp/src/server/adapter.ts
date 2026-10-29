@@ -1001,12 +1001,22 @@ function selectAutoApprovedPermissionOption(
 
 function elicitationContent(
   answers: ProviderUserInputAnswers,
-  allowedKeys: ReadonlySet<string>,
+  properties: Record<string, unknown>,
 ): Record<string, EffectAcpSchema.ElicitationContentValue> {
   const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
   for (const [key, value] of Object.entries(answers)) {
-    if (!allowedKeys.has(key)) continue;
-    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    if (!Object.hasOwn(properties, key)) continue;
+    // Boolean questions are answered with their "true" or "false" option label.
+    if (
+      unknownRecord(properties[key])?.type === "boolean" &&
+      (value === "true" || value === "false")
+    ) {
+      content[key] = value === "true";
+    } else if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
       content[key] = value;
     } else if (Array.isArray(value)) {
       content[key] = value.filter((entry): entry is string => typeof entry === "string");
@@ -6218,9 +6228,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const enumValues = Array.isArray(record?.enum)
                       ? record.enum.filter((value): value is string => typeof value === "string")
                       : [];
+                    // Enum values are exact; the client only trims options without a value.
                     const options =
                       enumValues.length > 0
-                        ? enumValues.map((value) => ({ label: value, description: value }))
+                        ? enumValues.map((value) => ({ label: value, description: value, value }))
                         : record?.type === "boolean"
                           ? [
                               { label: "true", description: "Yes" },
@@ -6232,6 +6243,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       header: nonEmptyText(record?.title, `Question ${index + 1}`),
                       question: nonEmptyText(record?.description, params.message),
                       options,
+                      ...(options.length > 0 ? { allowCustomAnswer: false } : {}),
                     };
                   },
                 );
@@ -6257,10 +6269,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : (nativeForm?.respond(userInput.answers) ??
                     ({
                       action: "accept",
-                      content: elicitationContent(
-                        userInput.answers,
-                        new Set(Object.keys(properties)),
-                      ),
+                      content: elicitationContent(userInput.answers, properties),
                     } as const));
               yield* userInput.acknowledgeNativeResponse;
               return response;

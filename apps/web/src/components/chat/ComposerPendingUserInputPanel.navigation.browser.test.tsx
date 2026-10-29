@@ -73,17 +73,17 @@ function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]
   } satisfies OrchestrationV2ThreadProjection;
 }
 
-let requests: ReturnType<typeof usePendingThreadRequests>;
-
 function PendingRequestsProbe({
   environmentId,
   projection,
   loading = false,
   onWriteDraft,
+  onRequests,
 }: {
   environmentId: EnvironmentId;
   projection: OrchestrationV2ThreadProjection;
   loading?: boolean;
+  onRequests: (state: ReturnType<typeof usePendingThreadRequests>) => void;
   onWriteDraft?: Parameters<typeof usePendingThreadRequests>[0]["setComposerDraftPrompt"];
 }) {
   const promptRef = useRef("");
@@ -100,18 +100,23 @@ function PendingRequestsProbe({
     setThreadError: () => {},
   });
   useLayoutEffect(() => {
-    requests = state;
+    onRequests(state);
   });
   return null;
 }
 
 it("keeps additional information in the question answer when an option is selected", async () => {
+  let requests!: ReturnType<typeof usePendingThreadRequests>;
+  const onRequests = (state: typeof requests) => {
+    requests = state;
+  };
   const onWriteDraft = vi.fn();
   await using _screen = await render(
     <PendingRequestsProbe
       environmentId={EnvironmentId.make("selection-details-environment")}
       projection={questionProjection(threadRef.threadId)}
       onWriteDraft={onWriteDraft}
+      onRequests={onRequests}
     />,
   );
   await act(() =>
@@ -130,11 +135,20 @@ it("keeps additional information in the question answer when an option is select
 });
 
 it("retains answers, selections and question position after leaving chat, including while the projection reloads", async () => {
+  let requests!: ReturnType<typeof usePendingThreadRequests>;
+  const onRequests = (state: typeof requests) => {
+    requests = state;
+  };
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("remount-environment");
   const projection = questionProjection(threadRef.threadId);
   const probe = (loading = false) => (
-    <PendingRequestsProbe environmentId={environmentId} projection={projection} loading={loading} />
+    <PendingRequestsProbe
+      environmentId={environmentId}
+      projection={projection}
+      loading={loading}
+      onRequests={onRequests}
+    />
   );
   await using screen = await render(probe());
   await act(() =>
@@ -165,6 +179,10 @@ it("retains answers, selections and question position after leaving chat, includ
 });
 
 it("isolates drafts by environment, thread and request and discards only resolved requests", async () => {
+  let requests!: ReturnType<typeof usePendingThreadRequests>;
+  const onRequests = (state: typeof requests) => {
+    requests = state;
+  };
   using _timers = fakeTimers();
   const environmentId = EnvironmentId.make("scope-environment");
   const projection = questionProjection(threadRef.threadId);
@@ -175,8 +193,8 @@ it("isolates drafts by environment, thread and request and discards only resolve
     { environmentId, projection: questionProjection(threadRef.threadId, ["second", "first"]) },
   ];
   await using screen = await render(null);
-  const show = (scope: ComponentProps<typeof PendingRequestsProbe>) =>
-    screen.rerender(<PendingRequestsProbe {...scope} />);
+  const show = (scope: Omit<ComponentProps<typeof PendingRequestsProbe>, "onRequests">) =>
+    screen.rerender(<PendingRequestsProbe {...scope} onRequests={onRequests} />);
   for (const [index, scope] of scopes.entries()) {
     await show(scope);
     expect(requests.activePendingQuestionIndex).toBe(0);

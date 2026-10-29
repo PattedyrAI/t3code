@@ -30,6 +30,14 @@ at the end, leave the block. **Backspace** at the start of a code block turns it
 back into plain lines. Choose the language in a code block's corner to change
 it. Very large code blocks are shown without syntax highlighting.
 
+## Answer questions
+
+When a question accepts custom text, select your answers and add any details in
+its text field. Submit sends both together. Single-choice questions also wait
+for you to submit, so you have time to add context. Clear the selections to send
+only your own answer. Questions restricted to predefined choices do not accept
+additional text.
+
 ## Attach files
 
 Attach up to 100 files per message. Each image can be up to 10 MiB, with at most

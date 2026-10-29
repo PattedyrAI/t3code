@@ -81,10 +81,6 @@ contains a copied Codex setup. Use a fresh shadow directory and sign in again.
 Codex can ask a question and keep working. Answer it in the thread's question
 panel. The answer becomes a new message: it reaches the active turn, or starts
 another turn if Codex has finished. Unanswered questions survive reconnects.
-Select the answers you want, optionally add details in the text field, then submit.
-The selected choices and your added text are sent together. You can also clear the
-selections and send only your own answer. Questions restricted to fixed choices
-do not accept additional text.
 If you do not want to answer, dismiss the question from its panel. Dismissing
 closes it without sending anything to Codex. This requires a Codex version that
 supports async questions.

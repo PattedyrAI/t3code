@@ -1165,9 +1165,12 @@ function normalizeAnswerForXAi(
   }
 
   const optionByLabel = new Map(question.options.map((option) => [option.label, option]));
-  const resolvedValues = values.map((value) => ({
+  const resolvedValues = values.map((value, index) => ({
     value,
-    option: optionByLabel.get(value),
+    option:
+      (question.multiSelect === true || index === 0) && values.indexOf(value) === index
+        ? optionByLabel.get(value)
+        : undefined,
   }));
   const selectedLabels = resolvedValues.flatMap(({ option }) => (option ? [option.label] : []));
   const notes = resolvedValues.flatMap(({ option, value }) => (option ? [] : [value]));

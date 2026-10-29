@@ -1300,54 +1300,65 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("validates structured answers and preserves selected labels with a custom note", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("userInput/requested", {
-        userInputId: "question-1",
-        turnId: nativeId,
-        questions: [
-          {
-            id: "approach",
-            header: "Approach",
-            question: "Which approach?",
-            options: [{ label: "Small" }, { label: "Large" }],
-            selection: { mode: "single" },
-          },
-        ],
-      });
-      const pending = yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.kind === "user_input",
-      );
-      const invalid = yield* harness.runtime
-        .respondToRuntimeRequest({
+  it.effect.each([
+    { note: "Keep tests focused", mode: "single" as const },
+    { note: "Large", mode: "single" as const },
+    { note: "Small", mode: "single" as const },
+    { note: "Small", mode: "multiple" as const },
+  ])(
+    "validates structured answers and preserves selected labels with a custom note: $mode / $note",
+    ({ note, mode }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        yield* fake.emit("userInput/requested", {
+          userInputId: "question-1",
+          turnId: nativeId,
+          questions: [
+            {
+              id: "approach",
+              header: "Approach",
+              question: "Which approach?",
+              options: [{ label: "Small" }, { label: "Large" }],
+              selection: { mode },
+            },
+          ],
+        });
+        const pending = yield* harness.takeEvent(
+          "runtime_request.updated",
+          (event) => event.runtimeRequest.kind === "user_input",
+        );
+        const invalid = yield* harness.runtime
+          .respondToRuntimeRequest({
+            requestId: pending.runtimeRequest.id,
+            answers: { approach: ["Small", "x".repeat(501)] },
+          })
+          .pipe(Effect.exit);
+        assert.strictEqual(invalid._tag, "Failure");
+        assert.isFalse(fake.calls.some((call) => call.method === "userInput/answer"));
+        yield* harness.runtime.respondToRuntimeRequest({
           requestId: pending.runtimeRequest.id,
-          answers: { approach: ["Small", "Large"] },
-        })
-        .pipe(Effect.exit);
-      assert.strictEqual(invalid._tag, "Failure");
-      assert.isFalse(fake.calls.some((call) => call.method === "userInput/answer"));
-      yield* harness.runtime.respondToRuntimeRequest({
-        requestId: pending.runtimeRequest.id,
-        answers: { approach: ["Small", "Keep tests focused"] },
-      });
-      const response = yield* fake.takeCall("userInput/answer");
-      assert.deepStrictEqual(response.params.answers, [
-        { questionId: "approach", selectedLabel: "Small", note: "Keep tests focused" },
-      ]);
-      yield* fake.emit("userInput/settled", {
-        userInputId: "question-1",
-        turnId: nativeId,
-        answers: response.params.answers,
-      });
-      yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "resolved",
-      );
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+          answers: { approach: ["Small", note] },
+        });
+        const response = yield* fake.takeCall("userInput/answer");
+        assert.deepStrictEqual(response.params.answers, [
+          {
+            questionId: "approach",
+            ...(mode === "single" ? { selectedLabel: "Small" } : { selectedLabels: ["Small"] }),
+            note,
+          },
+        ]);
+        yield* fake.emit("userInput/settled", {
+          userInputId: "question-1",
+          turnId: nativeId,
+          answers: response.params.answers,
+        });
+        yield* harness.takeEvent(
+          "runtime_request.updated",
+          (event) => event.runtimeRequest.status === "resolved",
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("steers only the active native turn and waits for confirmed interruption", () =>

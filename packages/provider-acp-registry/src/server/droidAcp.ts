@@ -59,6 +59,16 @@ export const extractDroidElicitationForm: NonNullable<
       const entries: Array<[string, string]> = [];
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
+        if (Array.isArray(answer)) {
+          // A choice with custom text arrives as [choice ID, text, ...attachment references].
+          if (!answer.every(Predicate.isString) || answer.join("").trim().length === 0) {
+            return { action: "cancel" };
+          }
+          const selectedOption = question.options.find((option) => option.value === answer[0]);
+          const parts = selectedOption ? [selectedOption.label, ...answer.slice(1)] : answer;
+          entries.push([question.id, "other"], [`${question.id}_other`, parts.join("\n\n")]);
+          continue;
+        }
         if (!Predicate.isString(answer) || answer.trim().length === 0) return { action: "cancel" };
         if (question.options.some((option) => option.value === answer)) {
           entries.push([question.id, answer]);

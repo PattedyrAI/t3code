@@ -2292,20 +2292,31 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               const answers = [];
               for (const question of questionRequest.questions) {
                 const raw = yield* decode(responseAnswerSchema, args.answers?.[question.id]);
-                const values = typeof raw === "string" ? [raw] : [...new Set(raw)];
-                const selected = values.filter((value) =>
-                  question.options.some((option) => option.label === value),
-                );
-                const freeText = values.filter((value) => !selected.includes(value)).join("\n");
+                const values = typeof raw === "string" ? [raw] : raw;
+                const singleSelect = question.selection.mode === "single";
+                const selected = [
+                  ...new Set(
+                    (singleSelect ? values.slice(0, 1) : values).filter((value) =>
+                      question.options.some((option) => option.label === value),
+                    ),
+                  ),
+                ];
+                const freeText = values
+                  .filter(
+                    (value, index) =>
+                      (singleSelect && index > 0) ||
+                      values.indexOf(value) !== index ||
+                      !selected.includes(value),
+                  )
+                  .join("\n");
                 if (freeText.length > 500 || (!freeText && !selected.length))
                   return yield* protocolError(
                     "Muse needs a nonempty answer with at most 500 custom characters",
                   );
                 if (
-                  (question.selection.mode === "single" && selected.length > 1) ||
-                  (selected.length > 0 &&
-                    (selected.length < (question.selection.minSelections ?? 0) ||
-                      selected.length > (question.selection.maxSelections ?? Infinity)))
+                  selected.length > 0 &&
+                  (selected.length < (question.selection.minSelections ?? 0) ||
+                    selected.length > (question.selection.maxSelections ?? Infinity))
                 )
                   return yield* protocolError("Muse question selection count is invalid");
                 answers.push({

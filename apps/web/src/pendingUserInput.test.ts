@@ -22,7 +22,7 @@ describe("projectPendingUserInputAnswer", () => {
 
   it("sends thread chips as readable links with the actual thread ID", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
-    expect(projectPendingUserInputAnswer(answer, [record])).toBe(
+    expect(projectPendingUserInputAnswer(answer, [record], answer)).toBe(
       "Compare [Reference work](t3-thread://v2/env-answer/reference-thread)",
     );
   });
@@ -30,6 +30,7 @@ describe("projectPendingUserInputAnswer", () => {
   it("projects only the added text in a combined answer, preserving raw selected values", () => {
     const customAnswer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
     const selectedValue = formatInlineContextReference(threadContextReference(record));
+    expect(projectPendingUserInputAnswer(selectedValue, [record])).toBe(selectedValue);
     expect(
       projectPendingUserInputAnswer([selectedValue, customAnswer], [record], customAnswer),
     ).toEqual([

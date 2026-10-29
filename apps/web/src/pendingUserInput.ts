@@ -23,7 +23,11 @@ export function projectPendingUserInputAnswer(
       const record = reference.kind === "thread" ? recordsById.get(reference.contextId) : undefined;
       return record ? formatThreadLink(record, reference.label) : reference.source;
     });
-  if (typeof answer === "string") return projectText(answer);
+  if (typeof answer === "string") {
+    return customAnswer !== undefined && (answer === customAnswer || answer === customAnswer.trim())
+      ? projectText(answer)
+      : answer;
+  }
   if (Array.isArray(answer) && customAnswer?.trim() && answer.at(-1) === customAnswer.trim()) {
     return [...answer.slice(0, -1), projectText(customAnswer.trim())];
   }

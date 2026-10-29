@@ -627,6 +627,35 @@ describe("AcpAdapterV2", () => {
       }),
     },
     {
+      scenario: "sends a selected choice with custom text as the companion answer",
+      schema: droidSchema,
+      questions: droidQuestions,
+      answers: { question_1: ["option_1", "Use tabs"], question_2: "option_0" },
+      result: {
+        action: "accept",
+        content: {
+          question_1: "other",
+          question_1_other: "Plain text\n\nUse tabs",
+          question_2: "option_0",
+        },
+      },
+    },
+    {
+      scenario: "sends a selected choice with custom text and attachment paths",
+      schema: droidSchema,
+      questions: droidQuestions,
+      withAttachments: true,
+      answers: { question_1: ["option_1", "Use tabs"], question_2: "option_0" },
+      result: (directory: string) => ({
+        action: "accept",
+        content: {
+          question_1: "other",
+          question_1_other: `Plain text\n\nUse tabs\n\nAttached image "shot.png": ${JSON.stringify(NodePath.join(directory, "droid-shot.png"))}\nAttached file "spec.txt": ${JSON.stringify(NodePath.join(directory, "droid-spec.txt"))}`,
+          question_2: "option_0",
+        },
+      }),
+    },
+    {
       scenario: "cancels without accepting answers",
       schema: droidSchema,
       questions: droidQuestions,
@@ -639,6 +668,45 @@ describe("AcpAdapterV2", () => {
       questions: [{ id: "name", header: "Question 1", question: "Your answer?", options: [] }],
       answers: { name: "Ada" },
       result: { action: "accept", content: { name: "Ada" } },
+    },
+    {
+      scenario: "falls back to exact fixed enum choices",
+      schema: {
+        type: "object",
+        properties: { mode: { type: "string", enum: [" fast ", "slow"] } },
+      },
+      questions: [
+        {
+          id: "mode",
+          header: "Question 1",
+          question: "Your answer?",
+          options: [
+            { label: " fast ", description: " fast ", value: " fast " },
+            { label: "slow", description: "slow", value: "slow" },
+          ],
+          allowCustomAnswer: false,
+        },
+      ],
+      answers: { mode: " fast " },
+      result: { action: "accept", content: { mode: " fast " } },
+    },
+    {
+      scenario: "falls back to fixed boolean choices",
+      schema: { type: "object", properties: { confirm: { type: "boolean" } } },
+      questions: [
+        {
+          id: "confirm",
+          header: "Question 1",
+          question: "Your answer?",
+          options: [
+            { label: "true", description: "Yes" },
+            { label: "false", description: "No" },
+          ],
+          allowCustomAnswer: false,
+        },
+      ],
+      answers: { confirm: "false" },
+      result: { action: "accept", content: { confirm: false } },
     },
   ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {

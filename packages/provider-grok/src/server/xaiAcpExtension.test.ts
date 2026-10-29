@@ -1062,33 +1062,46 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
-  it("maps UI question ids back to xAI question text in accepted responses", () => {
-    const response = makeXAiAskUserQuestionResponse(
-      {
-        sessionId: "session-1",
-        toolCallId: "tool-call-1",
-        mode: "default",
-        questions: [
-          {
-            id: "scope",
-            question: "Which scope should Grok use?",
-            options: [
-              { label: "workspace", description: "Use the current workspace" },
-              { label: "session", description: "Only use this session" },
-            ],
-          },
-        ],
-      },
-      { scope: "workspace" },
-    );
+  it.each([
+    { note: undefined, multiSelect: false },
+    { note: "Keep this scoped", multiSelect: false },
+    { note: "session", multiSelect: false },
+    { note: "workspace", multiSelect: false },
+    { note: "workspace", multiSelect: true },
+  ])(
+    "maps UI question ids and preserves choice notes: $multiSelect / $note",
+    ({ note, multiSelect }) => {
+      const response = makeXAiAskUserQuestionResponse(
+        {
+          sessionId: "session-1",
+          toolCallId: "tool-call-1",
+          mode: "default",
+          questions: [
+            {
+              id: "scope",
+              multiSelect,
+              question: "Which scope should Grok use?",
+              options: [
+                { label: "workspace", description: "Use the current workspace" },
+                { label: "session", description: "Only use this session" },
+              ],
+            },
+          ],
+        },
+        { scope: note === undefined ? "workspace" : ["workspace", note] },
+      );
 
-    expect(response).toEqual({
-      outcome: "accepted",
-      answers: {
-        "Which scope should Grok use?": ["workspace"],
-      },
-    });
-  });
+      expect(response).toEqual({
+        outcome: "accepted",
+        answers: {
+          "Which scope should Grok use?": ["workspace"],
+        },
+        ...(note === undefined
+          ? {}
+          : { annotations: { "Which scope should Grok use?": { notes: note } } }),
+      });
+    },
+  );
 
   it("encodes typed custom answers as xAI Other annotations", () => {
     const response = makeXAiAskUserQuestionResponse(

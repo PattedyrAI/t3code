@@ -3281,6 +3281,7 @@ function piQuestion(
     header: title,
     question,
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
+    ...(method === "select" ? { allowCustomAnswer: false } : {}),
     options,
   };
 }
@@ -3299,11 +3300,12 @@ function piUiResponse(
   // RPC distinguishes empty dialog values from cancellation (undefined).
   if (typeof answer === "string") return { value: answer };
   if (
+    pending.method === "input" &&
     Array.isArray(answer) &&
     answer.length > 0 &&
     answer.every((value) => typeof value === "string")
   ) {
-    return { value: answer.join("\n\n") };
+    return { value: answer.filter((value) => value.length > 0).join("\n\n") };
   }
   return { cancelled: true };
 }

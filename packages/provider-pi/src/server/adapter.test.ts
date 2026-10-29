@@ -3248,6 +3248,7 @@ describe("PiAdapterV2", () => {
         return assert.fail("expected a user input request");
       }
       const questions = decodeUserInputQuestions(event.turnItem.questions);
+      assert.isFalse(questions[0]?.allowCustomAnswer);
       assert.deepEqual(
         questions[0]?.options.map((option) => [option.label, option.value]),
         [
@@ -3265,7 +3266,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("sends a selected option and its additional text as one dialog response", () =>
+  it.effect("does not prepend an empty input selection to added text", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -3276,10 +3277,9 @@ describe("PiAdapterV2", () => {
       });
       yield* fake.emit({
         type: "extension_ui_request",
-        id: "ui-select-details",
-        method: "select",
-        title: "Pick a format",
-        options: ["CSV", "JSON"],
+        id: "ui-input-details",
+        method: "input",
+        title: "Enter a format",
       });
       const event = yield* takeEvent(
         (event) =>
@@ -3290,10 +3290,10 @@ describe("PiAdapterV2", () => {
       }
       yield* runtime.respondToRuntimeRequest({
         requestId: event.turnItem.requestId,
-        answers: { "ui-select-details": ["CSV", "Also include examples"] },
+        answers: { "ui-input-details": ["", "Also include examples"] },
       });
       const response = yield* fake.takeRequest("extension_ui_response");
-      assert.equal(response["value"], "CSV\n\nAlso include examples");
+      assert.equal(response["value"], "Also include examples");
       assert.isUndefined(response["cancelled"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
